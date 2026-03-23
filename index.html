@@ -4,23 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Sunnfjord GK">
 <title>Sunnfjord GK — Slagregistrering</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Georgia, serif; -webkit-text-size-adjust: 100%; }
-</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Georgia, serif; -webkit-text-size-adjust: 100%; background: #f5f5f0; }
+  .leaflet-container { font-family: Georgia, serif; }
+</style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useRef, useEffect } = React;
+const { useState, useRef, useEffect, useCallback } = React;
 
-// ─── Course Data from Sunnfjord Golfklubb banekart ───
+// ─── Banedata Sunnfjord Golfklubb ───
 const COURSE_DATA = [
   { hole: 1,  par: 4, index: 17, yellowM: 222, redM: 172 },
   { hole: 2,  par: 5, index: 5,  yellowM: 382, redM: 355 },
@@ -41,7 +43,6 @@ const COURSE_DATA = [
   { hole: 17, par: 4, index: 16, yellowM: 227, redM: 192 },
   { hole: 18, par: 4, index: 8,  yellowM: 273, redM: 212 },
 ];
-
 const TOTAL_PAR = COURSE_DATA.reduce((s, h) => s + h.par, 0);
 
 const CLUBS = [
@@ -50,6 +51,7 @@ const CLUBS = [
   "PW", "GW", "SW", "LW", "Putter"
 ];
 
+// Tee-posisjonar (utslagsfelt) — estimerte
 const TEE_POSITIONS = [
   { lat: 61.3825, lon: 6.5065 }, { lat: 61.3830, lon: 6.5072 },
   { lat: 61.3843, lon: 6.5078 }, { lat: 61.3848, lon: 6.5085 },
@@ -62,6 +64,28 @@ const TEE_POSITIONS = [
   { lat: 61.3847, lon: 6.5060 }, { lat: 61.3840, lon: 6.5052 },
 ];
 
+// Green-posisjonar (holkoppar) — estimerte
+const GREEN_POSITIONS = [
+  { lat: 61.3838, lon: 6.5068 }, { lat: 61.3848, lon: 6.5078 },
+  { lat: 61.3848, lon: 6.5082 }, { lat: 61.3862, lon: 6.5072 },
+  { lat: 61.3862, lon: 6.5082 }, { lat: 61.3850, lon: 6.5058 },
+  { lat: 61.3845, lon: 6.5055 }, { lat: 61.3835, lon: 6.5048 },
+  { lat: 61.3828, lon: 6.5055 }, { lat: 61.3835, lon: 6.5082 },
+  { lat: 61.3845, lon: 6.5090 }, { lat: 61.3850, lon: 6.5095 },
+  { lat: 61.3862, lon: 6.5088 }, { lat: 61.3858, lon: 6.5078 },
+  { lat: 61.3852, lon: 6.5065 }, { lat: 61.3848, lon: 6.5062 },
+  { lat: 61.3840, lon: 6.5055 }, { lat: 61.3832, lon: 6.5048 },
+];
+
+const MAP_COLORS = [
+  "#cc0000","#e67300","#ccaa00","#2d8a4e","#1a8a7a",
+  "#2266cc","#4444cc","#8833aa","#cc3377","#cc4400",
+  "#669900","#109977","#2277cc","#6633cc","#cc3366",
+  "#cc6600","#33aaaa","#88aa00",
+];
+
+const COURSE_CENTER = { lat: 61.3845, lon: 6.5072 };
+
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const toRad = d => (d * Math.PI) / 180;
@@ -72,230 +96,257 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function extractEXIF(file) {
-  return new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const view = new DataView(e.target.result);
-      if (view.getUint16(0) !== 0xffd8) return resolve(null);
-      let offset = 2;
-      while (offset < view.byteLength) {
-        if (view.getUint16(offset) === 0xffe1) return resolve(parseEXIF(view, offset + 4));
-        offset += 2 + view.getUint16(offset + 2);
+function scoreLabel(score, par) {
+  const diff = score - par;
+  return diff <= -2 ? "Eagle" : diff === -1 ? "Birdie" :
+    diff === 0 ? "Par" : diff === 1 ? "Bogey" :
+    diff === 2 ? "Dbl-bogey" : `+${diff}`;
+}
+
+// ─── Leaflet Map Component ───
+function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef([]);
+
+  const greenPos = GREEN_POSITIONS[currentHole - 1];
+  const teePos = TEE_POSITIONS[currentHole - 1];
+
+  useEffect(() => {
+    if (mapInstanceRef.current) return;
+
+    const map = L.map(mapRef.current, {
+      center: [COURSE_CENTER.lat, COURSE_CENTER.lon],
+      zoom: 17,
+      zoomControl: false,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OSM',
+      maxZoom: 20,
+    }).addTo(map);
+
+    L.control.zoom({ position: 'topright' }).addTo(map);
+
+    map.on('click', (e) => {
+      const pos = { lat: e.latlng.lat, lon: e.latlng.lng };
+      if (window._golfOnPlaceBall) window._golfOnPlaceBall(pos);
+    });
+
+    mapInstanceRef.current = map;
+
+    return () => { map.remove(); mapInstanceRef.current = null; };
+  }, []);
+
+  // Oppdater callback ref
+  useEffect(() => {
+    window._golfOnPlaceBall = onPlaceBall;
+    return () => { window._golfOnPlaceBall = null; };
+  }, [onPlaceBall]);
+
+  // Oppdater markørar og linjer
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Fjern gamle markørar
+    markersRef.current.forEach(m => map.removeLayer(m));
+    markersRef.current = [];
+
+    // Tee-markør for gjeldande hol
+    if (teePos) {
+      const m = L.circleMarker([teePos.lat, teePos.lon], {
+        radius: 8, color: "#1a3a25", fillColor: "#fff", fillOpacity: 1, weight: 3,
+      }).addTo(map).bindTooltip(`Tee ${currentHole}`, { permanent: false });
+      markersRef.current.push(m);
+    }
+
+    // Green/flagg-markør
+    if (greenPos) {
+      const m = L.marker([greenPos.lat, greenPos.lon], {
+        icon: L.divIcon({
+          html: '<div style="font-size:24px;text-align:center;margin-top:-12px;margin-left:-6px">⛳</div>',
+          iconSize: [24, 24], className: '',
+        }),
+      }).addTo(map).bindTooltip(`Hol ${currentHole}`, { permanent: false });
+      markersRef.current.push(m);
+    }
+
+    // Tidlegare hol (fullførte)
+    holes.forEach(h => {
+      const color = MAP_COLORS[(h.hole - 1) % MAP_COLORS.length];
+      const hTee = TEE_POSITIONS[h.hole - 1];
+      const pts = h.shots.filter(s => s.pos).map(s => [s.pos.lat, s.pos.lon]);
+      if (hTee && pts.length > 0) {
+        const line = L.polyline([[hTee.lat, hTee.lon], ...pts], {
+          color, weight: 3, opacity: 0.6,
+        }).addTo(map);
+        markersRef.current.push(line);
       }
-      resolve(null);
-    };
-    reader.readAsArrayBuffer(file);
-  });
-}
+      pts.forEach((p, i) => {
+        const cm = L.circleMarker(p, {
+          radius: 4, color, fillColor: color, fillOpacity: 0.8, weight: 1,
+        }).addTo(map);
+        markersRef.current.push(cm);
+      });
+    });
 
-function parseEXIF(view, start) {
-  const h = String.fromCharCode(view.getUint8(start), view.getUint8(start+1), view.getUint8(start+2), view.getUint8(start+3));
-  if (h !== "Exif") return null;
-  const ts = start + 6;
-  const be = view.getUint16(ts) === 0x4d4d;
-  const g16 = o => view.getUint16(o, !be);
-  const g32 = o => view.getUint32(o, !be);
-  const rat = o => { const n = g32(ts+o), d = g32(ts+o+4); return d ? n/d : 0; };
-  const coord = o => rat(o) + rat(o+8)/60 + rat(o+16)/3600;
+    // Gjeldande hol - slag
+    const color = MAP_COLORS[(currentHole - 1) % MAP_COLORS.length];
+    const allPts = [];
+    if (teePos) allPts.push([teePos.lat, teePos.lon]);
+    currentShots.forEach(s => {
+      if (s.pos) allPts.push([s.pos.lat, s.pos.lon]);
+    });
 
-  const ifd = g32(ts + 4);
-  let gpsOff = null;
-  for (let i = 0; i < g16(ts + ifd); i++) {
-    const e = ts + ifd + 2 + i * 12;
-    if (g16(e) === 0x8825) { gpsOff = g32(e + 8); break; }
-  }
-  if (!gpsOff) return null;
-
-  let lat = null, lon = null, latR = "N", lonR = "E";
-  for (let i = 0; i < g16(ts + gpsOff); i++) {
-    const e = ts + gpsOff + 2 + i * 12;
-    const tag = g16(e), vo = g32(e + 8);
-    if (tag === 1) latR = String.fromCharCode(view.getUint8(e + 8));
-    if (tag === 2) lat = coord(vo);
-    if (tag === 3) lonR = String.fromCharCode(view.getUint8(e + 8));
-    if (tag === 4) lon = coord(vo);
-  }
-  if (lat == null || lon == null) return null;
-  if (latR === "S") lat = -lat;
-  if (lonR === "W") lon = -lon;
-  return { lat, lon };
-}
-
-// Hent GPS: prøv EXIF først, deretter geolocation som fallback
-async function getPhotoGPS(file) {
-  // 1. Prøv EXIF frå biletet
-  const exif = await extractEXIF(file);
-  if (exif) return { ...exif, source: "exif" };
-
-  // 2. Fallback: navigator.geolocation
-  return new Promise(resolve => {
-    if (!navigator.geolocation) return resolve(null);
-    navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, source: "gps" }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 2000 }
-    );
-  });
-}
-
-// ─── Map ───
-function CourseMap({ holes, currentShots, currentHole }) {
-  const allPoints = [...TEE_POSITIONS];
-  const addPts = shots => shots.forEach(s => { if (s.pos) allPoints.push(s.pos); });
-  holes.forEach(h => addPts(h.shots));
-  addPts(currentShots);
-
-  const hasGPS = holes.some(h => h.shots.some(s => s.pos)) || currentShots.some(s => s.pos);
-  if (!hasGPS) {
-    return (
-      <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 12, padding: 30, textAlign: "center", opacity: 0.5, border: "1px solid rgba(200,180,140,0.15)" }}>
-        <div style={{ fontSize: 32, marginBottom: 8 }}>🗺️</div>
-        <div style={{ fontSize: 13 }}>Kartet visast når slag er registrert med GPS</div>
-      </div>
-    );
-  }
-
-  const lats = allPoints.map(p => p.lat), lons = allPoints.map(p => p.lon);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-  const pLat = (maxLat - minLat) * 0.15 || 0.001;
-  const pLon = (maxLon - minLon) * 0.15 || 0.001;
-  const W = 400, H = 320;
-  const toX = lon => ((lon - (minLon - pLon)) / ((maxLon + pLon) - (minLon - pLon))) * W;
-  const toY = lat => H - ((lat - (minLat - pLat)) / ((maxLat + pLat) - (minLat - pLat))) * H;
-
-  const colors = [
-    "#ff6b6b","#ffa94d","#ffd43b","#69db7c","#38d9a9",
-    "#4dabf7","#748ffc","#da77f2","#f783ac","#e8590c",
-    "#94d82d","#20c997","#339af0","#845ef7","#f06595",
-    "#fd7e14","#66d9e8","#c0eb75",
-  ];
-
-  const renderShots = (shots, holeNum, dashed) => {
-    const teePos = TEE_POSITIONS[holeNum - 1];
-    const pts = shots.filter(s => s.pos);
-    const c = colors[(holeNum - 1) % colors.length];
-    const lines = [];
-
-    // Linje frå tee til fyrste ball
-    if (teePos && pts.length > 0) {
-      lines.push(
-        <line key={`tee${holeNum}`}
-          x1={toX(teePos.lon)} y1={toY(teePos.lat)}
-          x2={toX(pts[0].pos.lon)} y2={toY(pts[0].pos.lat)}
-          stroke={c} strokeWidth={dashed ? 2.5 : 2} strokeLinecap="round"
-          opacity={dashed ? 1 : 0.7}
-          strokeDasharray={dashed ? "6,3" : "none"}
-        />
-      );
+    if (allPts.length >= 2) {
+      const line = L.polyline(allPts, {
+        color, weight: 3, opacity: 1, dashArray: "8,5",
+      }).addTo(map);
+      markersRef.current.push(line);
     }
 
-    // Linjer mellom ballposisjonar
-    for (let i = 0; i < pts.length - 1; i++) {
-      lines.push(
-        <line key={`l${holeNum}-${i}`}
-          x1={toX(pts[i].pos.lon)} y1={toY(pts[i].pos.lat)}
-          x2={toX(pts[i+1].pos.lon)} y2={toY(pts[i+1].pos.lat)}
-          stroke={c} strokeWidth={dashed ? 2.5 : 2} strokeLinecap="round"
-          opacity={dashed ? 1 : 0.7}
-          strokeDasharray={dashed ? "6,3" : "none"}
-        />
-      );
+    currentShots.forEach((s, i) => {
+      if (!s.pos) return;
+      const cm = L.circleMarker([s.pos.lat, s.pos.lon], {
+        radius: 7, color, fillColor: "#fff", fillOpacity: 1, weight: 3,
+      }).addTo(map).bindTooltip(`${s.shotNumber}. ${s.club}${s.distance ? " — " + s.distance + "m" : ""}`, {
+        permanent: false,
+      });
+      markersRef.current.push(cm);
+    });
+
+    // Avstandslinje til green frå siste posisjon
+    const lastPt = currentShots.length > 0 && currentShots[currentShots.length - 1].pos
+      ? currentShots[currentShots.length - 1].pos
+      : (currentShots.length === 0 ? teePos : null);
+    if (lastPt && greenPos) {
+      const dashLine = L.polyline(
+        [[lastPt.lat, lastPt.lon], [greenPos.lat, greenPos.lon]],
+        { color: "#999", weight: 1.5, dashArray: "4,4", opacity: 0.6 }
+      ).addTo(map);
+      markersRef.current.push(dashLine);
     }
-    return (
-      <g key={`h${holeNum}`}>
-        {lines}
-        {pts.map((s, i) => (
-          <circle key={`p${holeNum}-${i}`}
-            cx={toX(s.pos.lon)} cy={toY(s.pos.lat)}
-            r={i === pts.length - 1 ? 4 : 3}
-            fill={c} stroke={i === pts.length - 1 ? "white" : "none"}
-            strokeWidth="1" opacity="0.9"
-          />
-        ))}
-      </g>
-    );
-  };
 
-  const usedHoles = [...holes.map(h => h.hole),
-    ...(currentShots.some(s => s.pos) ? [currentHole] : [])
-  ].filter((v, i, a) => a.indexOf(v) === i);
+  }, [currentHole, currentShots, holes, teePos, greenPos]);
 
-  return (
-    <div style={{ background: "rgba(0,0,0,0.35)", borderRadius: 12, padding: 12, border: "1px solid rgba(200,180,140,0.15)" }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.4, marginBottom: 8, textAlign: "center" }}>
-        Sunnfjord GK — Slagkart
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
-        <rect width={W} height={H} fill="rgba(26,58,37,0.5)" rx="8" />
-        {TEE_POSITIONS.map((t, i) => (
-          <g key={`t${i}`}>
-            <circle cx={toX(t.lon)} cy={toY(t.lat)} r="4"
-              fill={i+1 === currentHole ? "rgba(200,180,140,0.6)" : "rgba(200,180,140,0.12)"}
-              stroke={i+1 === currentHole ? "#c8b48c" : "none"} strokeWidth="1" />
-            <text x={toX(t.lon)} y={toY(t.lat)-7} textAnchor="middle"
-              fontSize="7" fill="rgba(200,180,140,0.45)" fontFamily="monospace">{i+1}</text>
-          </g>
-        ))}
-        {holes.map(h => renderShots(h.shots, h.hole, false))}
-        {currentShots.some(s => s.pos) && renderShots(currentShots, currentHole, true)}
-      </svg>
-      {usedHoles.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", marginTop: 8, justifyContent: "center" }}>
-          {usedHoles.map(n => (
-            <div key={n} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, opacity: 0.7 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: colors[(n-1) % colors.length] }} />
-              H{n}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  // Sentrer kart på gjeldande hol
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !teePos) return;
+    map.setView([teePos.lat, teePos.lon], 17, { animate: true });
+  }, [currentHole]);
+
+  return <div ref={mapRef} style={{ width: "100%", height: 350, borderRadius: 12, border: "2px solid #1a3a25" }} />;
+}
+
+// ─── Report Builder ───
+function buildReportHTML(reportHoles, tee) {
+  const date = new Date().toLocaleDateString("nb-NO", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const rScore = reportHoles.reduce((s, h) => s + h.shots.length, 0);
+  const rPar = reportHoles.reduce((s, h) => s + COURSE_DATA[h.hole - 1].par, 0);
+  const rDiff = rScore - rPar;
+  const diffStr = rDiff > 0 ? `+${rDiff}` : rDiff === 0 ? "Even" : `${rDiff}`;
+
+  const allShots = reportHoles.flatMap(h => h.shots);
+  const clubStats = {};
+  allShots.forEach(s => {
+    if (!clubStats[s.club]) clubStats[s.club] = { count: 0, dists: [] };
+    clubStats[s.club].count++;
+    if (s.distance) clubStats[s.club].dists.push(s.distance);
+  });
+
+  const clubRows = Object.entries(clubStats).sort((a,b) => b[1].count - a[1].count).map(([club, st]) => {
+    const avg = st.dists.length ? Math.round(st.dists.reduce((s,d)=>s+d,0)/st.dists.length) : "–";
+    const mx = st.dists.length ? Math.max(...st.dists) : "–";
+    return `<tr><td>${club}</td><td style="text-align:center">${st.count}</td><td style="text-align:center">${avg}${avg!=="–"?"m":""}</td><td style="text-align:center">${mx}${mx!=="–"?"m":""}</td></tr>`;
+  }).join("");
+
+  const holeRows = reportHoles.map(h => {
+    const hi = COURSE_DATA[h.hole-1]; const sc = h.shots.length;
+    const lbl = scoreLabel(sc, hi.par);
+    const bg = sc < hi.par ? "#e6f9e6" : sc === hi.par ? "#e6f0ff" : sc === hi.par+1 ? "#fff8e6" : "#ffeded";
+    return `<tr style="background:${bg}"><td style="font-weight:600">${h.hole}${h.unfinished?" *":""}</td><td style="text-align:center">${hi.par}</td><td style="text-align:center">${hi.index}</td><td style="text-align:center">${tee==="yellow"?hi.yellowM:hi.redM}m</td><td style="text-align:center;font-weight:700">${sc}</td><td style="text-align:center">${h.unfinished?"Ufullført":lbl}</td></tr>`;
+  }).join("");
+
+  const shotDetails = reportHoles.map(h => {
+    const hi = COURSE_DATA[h.hole-1];
+    const rows = h.shots.map(s => {
+      const dist = s.distance ? `${s.distance}m` : "–";
+      const toHole = s.toHole ? `${s.toHole}m` : "–";
+      return `<tr><td style="text-align:center">${s.shotNumber}</td><td>${s.club}</td><td style="text-align:center">${dist}</td><td style="text-align:center">${toHole}</td></tr>`;
+    }).join("");
+    return `<h3 style="margin:18px 0 6px;color:#2d5a3d">Hol ${h.hole} — Par ${hi.par} — ${h.shots.length} slag (${scoreLabel(h.shots.length, hi.par)})</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">
+        <tr style="background:#2d5a3d;color:white"><th style="padding:4px 8px">Slag</th><th style="padding:4px 8px">Kølle</th><th style="padding:4px 8px">Avstand</th><th style="padding:4px 8px">Att til hol</th></tr>
+        ${rows}
+      </table>`;
+  }).join("");
+
+  // SVG-kart
+  const allGPS = [];
+  reportHoles.forEach(h => {
+    const tp = TEE_POSITIONS[h.hole-1]; if (tp) allGPS.push(tp);
+    h.shots.forEach(s => { if (s.pos) allGPS.push(s.pos); });
+    const gp = GREEN_POSITIONS[h.hole-1]; if (gp) allGPS.push(gp);
+  });
+  let mapSVG = "";
+  if (allGPS.length >= 2) {
+    const lats = allGPS.map(p=>p.lat), lons = allGPS.map(p=>p.lon);
+    const mnLa=Math.min(...lats),mxLa=Math.max(...lats),mnLo=Math.min(...lons),mxLo=Math.max(...lons);
+    const pLa=(mxLa-mnLa)*0.15||0.0005, pLo=(mxLo-mnLo)*0.15||0.0005;
+    const W=600,H=400;
+    const toX=lo=>((lo-(mnLo-pLo))/((mxLo+pLo)-(mnLo-pLo)))*W;
+    const toY=la=>H-((la-(mnLa-pLa))/((mxLa+pLa)-(mnLa-pLa)))*H;
+    let sv=`<rect width="${W}" height="${H}" fill="#e8f0e0" rx="8"/>`;
+    TEE_POSITIONS.forEach((t,i)=>{sv+=`<circle cx="${toX(t.lon)}" cy="${toY(t.lat)}" r="4" fill="#ccc"/><text x="${toX(t.lon)}" y="${toY(t.lat)-7}" text-anchor="middle" font-size="8" fill="#999" font-family="monospace">${i+1}</text>`;});
+    GREEN_POSITIONS.forEach((g,i)=>{sv+=`<circle cx="${toX(g.lon)}" cy="${toY(g.lat)}" r="3" fill="#2d8a4e" opacity="0.4"/>`;});
+    reportHoles.forEach(h=>{
+      const tp=TEE_POSITIONS[h.hole-1], gp=GREEN_POSITIONS[h.hole-1];
+      const pts=h.shots.filter(s=>s.pos); const c=MAP_COLORS[(h.hole-1)%MAP_COLORS.length];
+      if(tp&&pts.length>0) sv+=`<line x1="${toX(tp.lon)}" y1="${toY(tp.lat)}" x2="${toX(pts[0].pos.lon)}" y2="${toY(pts[0].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
+      for(let i=0;i<pts.length-1;i++) sv+=`<line x1="${toX(pts[i].pos.lon)}" y1="${toY(pts[i].pos.lat)}" x2="${toX(pts[i+1].pos.lon)}" y2="${toY(pts[i+1].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
+      if(pts.length>0&&gp) sv+=`<line x1="${toX(pts[pts.length-1].pos.lon)}" y1="${toY(pts[pts.length-1].pos.lat)}" x2="${toX(gp.lon)}" y2="${toY(gp.lat)}" stroke="${c}" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+      pts.forEach((s,i)=>{sv+=`<circle cx="${toX(s.pos.lon)}" cy="${toY(s.pos.lat)}" r="${i===pts.length-1?5:3.5}" fill="${c}" stroke="${i===pts.length-1?"white":"none"}" stroke-width="1.5"/>`;});
+    });
+    let lx=10; reportHoles.forEach(h=>{const c=MAP_COLORS[(h.hole-1)%MAP_COLORS.length]; sv+=`<circle cx="${lx+5}" cy="${H-15}" r="5" fill="${c}"/><text x="${lx+14}" y="${H-11}" font-size="10" fill="#333" font-family="sans-serif">H${h.hole}</text>`; lx+=42;});
+    mapSVG=`<h2>Slagkart</h2><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;border:1px solid #ccc;border-radius:8px;margin-bottom:16px">${sv}</svg>`;
+  }
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+    <style>body{font-family:Georgia,serif;color:#1a1a1a;max-width:700px;margin:0 auto;padding:20px 16px}h1{color:#2d5a3d;font-size:20px;margin-bottom:2px}h2{color:#2d5a3d;font-size:14px;border-bottom:2px solid #2d5a3d;padding-bottom:3px;margin-top:20px}h3{font-size:13px}table{width:100%;border-collapse:collapse}th,td{padding:4px 8px;border:1px solid #ddd;font-size:12px}th{background:#2d5a3d;color:white;font-size:11px}.summary{display:flex;gap:12px;margin:12px 0}.stat-box{background:#f4f7f5;border-radius:6px;padding:10px 14px;text-align:center;flex:1}.stat-box .num{font-size:24px;font-weight:300;color:#2d5a3d}.stat-box .lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.1em}</style></head><body>
+    <h1>⛳ Sunnfjord Golfklubb</h1>
+    <p style="color:#666;margin:0 0 14px;font-size:13px">${date} · ${tee==="yellow"?"Gul":"Raud"} tee</p>
+    <div class="summary"><div class="stat-box"><div class="num">${rScore}</div><div class="lbl">Slag</div></div><div class="stat-box"><div class="num">${diffStr}</div><div class="lbl">Par ${rPar}</div></div><div class="stat-box"><div class="num">${reportHoles.length}</div><div class="lbl">Hol</div></div></div>
+    <h2>Scorekort</h2>
+    <table><tr><th>Hol</th><th>Par</th><th>Idx</th><th>Lengde</th><th>Score</th><th>Resultat</th></tr>${holeRows}</table>
+    ${mapSVG}
+    ${clubRows?`<h2>Kølle-statistikk</h2><table><tr><th>Kølle</th><th>Slag</th><th>Snitt</th><th>Lengst</th></tr>${clubRows}</table>`:""}
+    <h2>Slagdetaljar</h2>${shotDetails}
+    <p style="margin-top:20px;font-size:10px;color:#aaa;text-align:center">Sunnfjord GK Slagregistrering</p>
+  </body></html>`;
 }
 
 // ─── Scorecard ───
 function Scorecard({ holes, currentHole, currentShots, tee }) {
-  const getScore = n => {
-    const f = holes.find(h => h.hole === n);
-    return f ? f.shots.length : null;
-  };
-  const scoreClr = (s, p) => {
-    if (s == null) return "#ccc";
-    const d = s - p;
-    return d <= -2 ? "#b8860b" : d === -1 ? "#cc0000" : d === 0 ? "#0066cc" : d === 1 ? "#666" : "#444";
-  };
+  const getScore = n => { const f = holes.find(h => h.hole === n); return f ? f.shots.length : null; };
+  const scoreClr = (s, p) => { if (s == null) return "#ccc"; const d = s-p; return d<=-2?"#b8860b":d===-1?"#cc0000":d===0?"#0066cc":d===1?"#666":"#444"; };
   const renderNine = (data, label) => (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", fontWeight: 700, marginBottom: 6 }}>{label}</div>
       <div style={{ display: "flex", gap: 3 }}>
         {data.map(h => {
-          const sc = getScore(h.hole);
-          const act = h.hole === currentHole;
-          return (
-            <div key={h.hole} style={{
-              flex: 1, textAlign: "center", borderRadius: 6, padding: "6px 0",
-              background: act ? "#e8f5e9" : "#fff",
-              border: act ? "2px solid #1a3a25" : "1px solid #ddd",
-            }}>
-              <div style={{ fontSize: 11, color: "#666", fontWeight: 700 }}>{h.hole}</div>
-              <div style={{ fontSize: 10, color: "#999" }}>P{h.par}</div>
-              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: scoreClr(sc, h.par), fontFamily: "monospace" }}>
-                {sc != null ? sc : (act && currentShots.length > 0 ? currentShots.length : "–")}
-              </div>
-            </div>
-          );
+          const sc = getScore(h.hole); const act = h.hole === currentHole;
+          return (<div key={h.hole} style={{ flex: 1, textAlign: "center", borderRadius: 6, padding: "6px 0", background: act?"#e8f5e9":"#fff", border: act?"2px solid #1a3a25":"1px solid #ddd" }}>
+            <div style={{ fontSize: 11, color: "#666", fontWeight: 700 }}>{h.hole}</div>
+            <div style={{ fontSize: 10, color: "#999" }}>P{h.par}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: scoreClr(sc, h.par), fontFamily: "monospace" }}>{sc != null ? sc : (act && currentShots.length > 0 ? currentShots.length : "–")}</div>
+          </div>);
         })}
-        <div style={{
-          width: 40, textAlign: "center", flexShrink: 0, borderRadius: 6, padding: "6px 0",
-          background: "#f5f5f0", border: "1px solid #ccc",
-        }}>
+        <div style={{ width: 40, textAlign: "center", flexShrink: 0, borderRadius: 6, padding: "6px 0", background: "#f5f5f0", border: "1px solid #ccc" }}>
           <div style={{ fontSize: 11, color: "#666", fontWeight: 700 }}>Sum</div>
-          <div style={{ fontSize: 10, color: "#999" }}>P{data.reduce((s,h) => s+h.par, 0)}</div>
-          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: "#1a3a25", fontFamily: "monospace" }}>
-            {data.reduce((s,h) => s + (getScore(h.hole) || 0), 0) || "–"}
-          </div>
+          <div style={{ fontSize: 10, color: "#999" }}>P{data.reduce((s,h)=>s+h.par,0)}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: "#1a3a25", fontFamily: "monospace" }}>{data.reduce((s,h)=>s+(getScore(h.hole)||0),0)||"–"}</div>
         </div>
       </div>
     </div>
@@ -303,583 +354,198 @@ function Scorecard({ holes, currentHole, currentShots, tee }) {
   return (
     <div style={{ background: "#fff", borderRadius: 12, padding: "14px 10px", border: "2px solid #1a3a25" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1a3a25", fontWeight: 700 }}>
-          Scorekort — {tee === "yellow" ? "Gul tee" : "Raud tee"}
-        </span>
+        <span style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1a3a25", fontWeight: 700 }}>Scorekort — {tee==="yellow"?"Gul tee":"Raud tee"}</span>
         <span style={{ fontSize: 13, color: "#1a3a25", fontWeight: 700 }}>Par {TOTAL_PAR}</span>
       </div>
-      {renderNine(COURSE_DATA.slice(0, 9), "Ut (1–9)")}
+      {renderNine(COURSE_DATA.slice(0,9), "Ut (1–9)")}
       {renderNine(COURSE_DATA.slice(9), "Inn (10–18)")}
     </div>
   );
 }
 
-// ─── Report Item ───
+// ─── ReportItem ───
 function ReportItem({ report: r, index: i, savedReports, setSavedReports }) {
-  const handleDelete = async () => {
-    const updated = savedReports.filter((_, idx) => idx !== i);
-    setSavedReports(updated);
-    try {
-      await window.storage.set("golf-reports", JSON.stringify(updated));
-    } catch (e) {
-      console.error("Klarte ikkje slette:", e);
-    }
-  };
-
-  const handleToggleShow = () => {
-    const updated = savedReports.map((rep, idx) =>
-      idx === i ? { ...rep, _show: !rep._show } : rep
-    );
-    setSavedReports(updated);
-  };
-
   const [showShareText, setShowShareText] = useState(false);
-
-  const handleShare = () => {
-    setShowShareText(v => !v);
+  const handleDelete = async () => {
+    const updated = savedReports.filter((_,idx) => idx !== i);
+    setSavedReports(updated);
+    try { localStorage.setItem("golf-reports", JSON.stringify(updated)); } catch(e){}
   };
-
-  const shareText = `⛳ Sunnfjord GK — ${r.date} kl. ${r.time}\n${r.holesPlayed} hol · ${r.score} slag · ${r.diff > 0 ? "+" + r.diff : r.diff === 0 ? "Even par" : r.diff}\n\nKøller brukt:\n${r.html.match(/<td>([^<]+)<\/td><td style="text-align:center">(\d+)<\/td>/g)?.map(m => {
-    const match = m.match(/<td>([^<]+)<\/td><td style="text-align:center">(\d+)<\/td>/);
-    return match ? `  ${match[1]}: ${match[2]} slag` : "";
-  }).join("\n") || "Sjå rapport for detaljar"}`;
-
-  const diffStr = r.diff > 0 ? `+${r.diff}` : r.diff === 0 ? "E" : `${r.diff}`;
-
+  const handleToggleShow = () => {
+    setSavedReports(savedReports.map((rep,idx) => idx===i ? {...rep, _show: !rep._show} : rep));
+  };
+  const diffStr = r.diff>0?`+${r.diff}`:r.diff===0?"E":`${r.diff}`;
   return (
-    <div style={{
-      padding: "14px 16px", marginBottom: 8,
-      background: "#fff",
-      border: "1px solid #ccc",
-      borderRadius: 10,
-    }}>
+    <div style={{ padding: "14px 16px", marginBottom: 8, background: "#fff", border: "1px solid #ccc", borderRadius: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 15, color: "#1a3a25", fontWeight: 700, marginBottom: 2 }}>
-            {r.date} kl. {r.time}
-          </div>
-          <div style={{ fontSize: 13, color: "#666" }}>
-            {r.holesPlayed} hol · {r.score} slag ·{" "}
-            <span style={{ color: r.diff > 0 ? "#cc0000" : r.diff < 0 ? "#1a7a1a" : "#0066cc", fontWeight: 700 }}>
-              {diffStr}
-            </span>
-          </div>
+          <div style={{ fontSize: 15, color: "#1a3a25", fontWeight: 700, marginBottom: 2 }}>{r.date} kl. {r.time}</div>
+          <div style={{ fontSize: 13, color: "#666" }}>{r.holesPlayed} hol · {r.score} slag · <span style={{ color: r.diff>0?"#cc0000":r.diff<0?"#1a7a1a":"#0066cc", fontWeight: 700 }}>{diffStr}</span></div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 6 }}>
-        <button onClick={handleToggleShow} style={{
-          flex: 2, padding: "12px",
-          background: r._show ? "#e8f5e9" : "#fff",
-          border: "2px solid #1a3a25",
-          borderRadius: 8, color: "#1a3a25", fontSize: 15, fontWeight: 700, cursor: "pointer",
-        }}>
-          {r._show ? "Skjul" : "👁️ Vis"}
-        </button>
-        <button onClick={handleShare} style={{
-          flex: 2, padding: "12px",
-          background: showShareText ? "#e8f5e9" : "#fff",
-          border: "2px solid #1a3a25",
-          borderRadius: 8, color: "#1a3a25", fontSize: 15, fontWeight: 700, cursor: "pointer",
-        }}>
-          {showShareText ? "Skjul tekst" : "📤 Del"}
-        </button>
-        <button onClick={handleDelete} style={{
-          padding: "12px 14px",
-          background: "#fff", border: "2px solid #cc4444",
-          borderRadius: 8, color: "#cc4444", fontSize: 14, cursor: "pointer",
-        }}>
-          🗑️
-        </button>
+        <button onClick={handleToggleShow} style={{ flex: 2, padding: "12px", background: r._show?"#e8f5e9":"#fff", border: "2px solid #1a3a25", borderRadius: 8, color: "#1a3a25", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>{r._show?"Skjul":"👁️ Vis"}</button>
+        <button onClick={()=>setShowShareText(v=>!v)} style={{ flex: 2, padding: "12px", background: showShareText?"#e8f5e9":"#fff", border: "2px solid #1a3a25", borderRadius: 8, color: "#1a3a25", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>{showShareText?"Skjul tekst":"📤 Del"}</button>
+        <button onClick={handleDelete} style={{ padding: "12px 14px", background: "#fff", border: "2px solid #cc4444", borderRadius: 8, color: "#cc4444", fontSize: 14, cursor: "pointer" }}>🗑️</button>
       </div>
       {showShareText && (
         <div style={{ marginTop: 8 }}>
-          <div style={{
-            fontSize: 12, color: "#666", marginBottom: 4,
-          }}>
-            Marker teksten og kopier:
-          </div>
-          <textarea
-            readOnly
-            value={`⛳ Sunnfjord GK — ${r.date} kl. ${r.time}\n${r.holesPlayed} hol · ${r.score} slag · ${r.diff > 0 ? "+" + r.diff : r.diff === 0 ? "Even par" : r.diff}`}
-            onFocus={e => e.target.select()}
-            style={{
-              width: "100%", minHeight: 80, padding: 12,
-              background: "#f5f5f0", border: "2px solid #1a3a25",
-              borderRadius: 8, fontSize: 15, fontFamily: "monospace",
-              color: "#1a1a1a", resize: "none",
-            }}
-          />
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Marker teksten og kopier:</div>
+          <textarea readOnly value={`⛳ Sunnfjord GK — ${r.date} kl. ${r.time}\n${r.holesPlayed} hol · ${r.score} slag · ${r.diff>0?"+"+r.diff:r.diff===0?"Even par":r.diff}`} onFocus={e=>e.target.select()} style={{ width: "100%", minHeight: 80, padding: 12, background: "#f5f5f0", border: "2px solid #1a3a25", borderRadius: 8, fontSize: 15, fontFamily: "monospace", color: "#1a1a1a", resize: "none" }} />
         </div>
       )}
-      {r._show && (
-        <iframe
-          srcDoc={r.html}
-          style={{
-            width: "100%", height: 400, border: "none",
-            borderRadius: 8, marginTop: 8, background: "white",
-          }}
-          sandbox="allow-same-origin"
-        />
-      )}
+      {r._show && <iframe srcDoc={r.html} style={{ width: "100%", height: 400, border: "none", borderRadius: 8, marginTop: 8, background: "white" }} sandbox="allow-same-origin" />}
     </div>
   );
 }
 
-// ─── Main App ───
+// ─── Hovudapp ───
 function GolfShotTracker() {
   const [holes, setHoles] = useState([]);
   const [currentHole, setCurrentHole] = useState(1);
   const [currentShots, setCurrentShots] = useState([]);
   const [selectedClub, setSelectedClub] = useState(null);
-  const [step, setStep] = useState("club"); // "club" | "photo"
+  const [step, setStep] = useState("club"); // "club" | "map"
   const [message, setMessage] = useState("");
   const [view, setView] = useState("play");
   const [tee, setTee] = useState("yellow");
   const [lastPos, setLastPos] = useState(TEE_POSITIONS[0]);
   const [inHole, setInHole] = useState(false);
   const [savedReports, setSavedReports] = useState([]);
-  const [loadingReports, setLoadingReports] = useState(true);
-  const [loadingRound, setLoadingRound] = useState(true);
   const [confirmFinish, setConfirmFinish] = useState(false);
-  const [gpsStatus, setGpsStatus] = useState("waiting"); // "waiting" | "ok" | "blocked" | "unavailable"
-  const [gpsCoords, setGpsCoords] = useState(null);
-  const [gpsAccuracy, setGpsAccuracy] = useState(null); // "EXIF" | "GPS" | null
-  const photoRef = useRef(null);
 
-  // Sjekk om geolocation er tilgjengeleg (for statusvisning)
+  // Last rapportar og aktiv runde frå localStorage
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setGpsStatus("waiting");
-      return;
-    }
-    // Gjer eit raskt forsøk for å sjå om geolocation fungerer
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGpsStatus("ok");
-        setGpsCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        setGpsAccuracy("GPS");
-      },
-      () => {
-        // Ikkje nødvendigvis blokkert — EXIF kan framleis fungere
-        setGpsStatus("waiting");
-      },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 5000 }
-    );
-  }, []);
-
-  // Last lagra rapportar og pågåande runde frå persistent storage
-  useEffect(() => {
-    (async () => {
-      try {
-        const result = await window.storage.get("golf-reports");
-        if (result && result.value) {
-          setSavedReports(JSON.parse(result.value));
-        }
-      } catch (e) {}
-      setLoadingReports(false);
-
-      try {
-        const round = await window.storage.get("golf-active-round");
-        if (round && round.value) {
-          const data = JSON.parse(round.value);
-          setHoles(data.holes || []);
-          setCurrentHole(data.currentHole || 1);
-          setCurrentShots(data.currentShots || []);
-          setTee(data.tee || "yellow");
-          // Rekonstruer lastPos
-          if (data.currentShots && data.currentShots.length > 0) {
-            const lastShot = data.currentShots[data.currentShots.length - 1];
-            setLastPos(lastShot.pos || TEE_POSITIONS[(data.currentHole || 1) - 1]);
-          } else {
-            setLastPos(TEE_POSITIONS[(data.currentHole || 1) - 1]);
-          }
-          setMessage("♻️ Pågåande runde henta opp att");
-        }
-      } catch (e) {}
-      setLoadingRound(false);
-    })();
-  }, []);
-
-  // Lagre pågåande runde til persistent storage ved kvar endring
-  useEffect(() => {
-    if (loadingRound) return; // Ikkje lagre medan vi lastar
-    (async () => {
-      try {
-        const hasActiveRound = holes.length > 0 || currentShots.length > 0;
-        if (hasActiveRound) {
-          await window.storage.set("golf-active-round", JSON.stringify({
-            holes, currentHole, currentShots, tee,
-          }));
-        } else {
-          await window.storage.delete("golf-active-round");
-        }
-      } catch (e) {
-        console.error("Klarte ikkje lagre runde:", e);
+    try { const r = localStorage.getItem("golf-reports"); if (r) setSavedReports(JSON.parse(r)); } catch(e){}
+    try {
+      const r = localStorage.getItem("golf-active-round");
+      if (r) {
+        const d = JSON.parse(r);
+        setHoles(d.holes||[]); setCurrentHole(d.currentHole||1);
+        setCurrentShots(d.currentShots||[]); setTee(d.tee||"yellow");
+        if (d.currentShots?.length > 0) {
+          const ls = d.currentShots[d.currentShots.length-1];
+          setLastPos(ls.pos || TEE_POSITIONS[(d.currentHole||1)-1]);
+        } else { setLastPos(TEE_POSITIONS[(d.currentHole||1)-1]); }
+        setMessage("♻️ Pågåande runde henta opp att");
       }
-    })();
-  }, [holes, currentHole, currentShots, tee, loadingRound]);
+    } catch(e){}
+  }, []);
+
+  // Lagre aktiv runde
+  useEffect(() => {
+    try {
+      if (holes.length > 0 || currentShots.length > 0) {
+        localStorage.setItem("golf-active-round", JSON.stringify({ holes, currentHole, currentShots, tee }));
+      } else { localStorage.removeItem("golf-active-round"); }
+    } catch(e){}
+  }, [holes, currentHole, currentShots, tee]);
 
   const holeInfo = COURSE_DATA[currentHole - 1];
-  const totalScore = holes.reduce((s, h) => s + h.shots.length, 0);
-  const totalPar = holes.reduce((s, h) => s + COURSE_DATA[h.hole - 1].par, 0);
+  const greenPos = GREEN_POSITIONS[currentHole - 1];
+  const totalScore = holes.reduce((s,h) => s + h.shots.length, 0);
+  const totalPar = holes.reduce((s,h) => s + COURSE_DATA[h.hole-1].par, 0);
   const scoreDiff = totalScore - totalPar;
 
-  const scoreLabel = (score, par) => {
-    const diff = score - par;
-    return diff <= -2 ? "Eagle" : diff === -1 ? "Birdie" :
-      diff === 0 ? "Par" : diff === 1 ? "Bogey" :
-      diff === 2 ? "Dbl-bogey" : `+${diff}`;
-  };
-
-  const buildReportHTML = (reportHoles) => {
-    const date = new Date().toLocaleDateString("nb-NO", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    const rScore = reportHoles.reduce((s, h) => s + h.shots.length, 0);
-    const rPar = reportHoles.reduce((s, h) => s + COURSE_DATA[h.hole - 1].par, 0);
-    const rDiff = rScore - rPar;
-    const diffStr = rDiff > 0 ? `+${rDiff}` : rDiff === 0 ? "Even" : `${rDiff}`;
-
-    const allShots = reportHoles.flatMap(h => h.shots);
-    const clubStats = {};
-    allShots.forEach(s => {
-      if (!clubStats[s.club]) clubStats[s.club] = { count: 0, dists: [] };
-      clubStats[s.club].count++;
-      if (s.distance) clubStats[s.club].dists.push(s.distance);
-    });
-
-    const clubRows = Object.entries(clubStats)
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(([club, st]) => {
-        const avg = st.dists.length ? Math.round(st.dists.reduce((s,d) => s+d, 0) / st.dists.length) : "–";
-        const mx = st.dists.length ? Math.max(...st.dists) : "–";
-        return `<tr><td>${club}</td><td style="text-align:center">${st.count}</td><td style="text-align:center">${avg}${avg !== "–" ? "m" : ""}</td><td style="text-align:center">${mx}${mx !== "–" ? "m" : ""}</td></tr>`;
-      }).join("");
-
-    const holeRows = reportHoles.map(h => {
-      const hi = COURSE_DATA[h.hole - 1];
-      const sc = h.shots.length;
-      const lbl = scoreLabel(sc, hi.par);
-      const bg = sc < hi.par ? "#e6f9e6" : sc === hi.par ? "#e6f0ff" : sc === hi.par + 1 ? "#fff8e6" : "#ffeded";
-      return `<tr style="background:${bg}">
-        <td style="font-weight:600">${h.hole}${h.unfinished ? " *" : ""}</td>
-        <td style="text-align:center">${hi.par}</td>
-        <td style="text-align:center">${hi.index}</td>
-        <td style="text-align:center">${tee === "yellow" ? hi.yellowM : hi.redM}m</td>
-        <td style="text-align:center;font-weight:700">${sc}</td>
-        <td style="text-align:center">${h.unfinished ? "Ufullført" : lbl}</td>
-      </tr>`;
-    }).join("");
-
-    const shotDetails = reportHoles.map(h => {
-      const hi = COURSE_DATA[h.hole - 1];
-      const rows = h.shots.map(s => {
-        const dist = s.distance ? `${s.distance}m` : "–";
-        const gps = s.pos ? `${s.pos.lat.toFixed(5)}, ${s.pos.lon.toFixed(5)}` : "–";
-        return `<tr><td style="text-align:center">${s.shotNumber}</td><td>${s.club}</td><td style="text-align:center">${dist}</td><td style="font-size:9px;color:#777">${gps}</td></tr>`;
-      }).join("");
-      return `<h3 style="margin:18px 0 6px;color:#2d5a3d">Hol ${h.hole}${h.unfinished ? " (ufullført)" : ""} — Par ${hi.par} — ${h.shots.length} slag${h.unfinished ? "" : ` (${scoreLabel(h.shots.length, hi.par)})`}</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">
-          <tr style="background:#2d5a3d;color:white"><th style="padding:4px 8px">Slag</th><th style="padding:4px 8px">Kølle</th><th style="padding:4px 8px">Avstand</th><th style="padding:4px 8px">GPS</th></tr>
-          ${rows}
-        </table>`;
-    }).join("");
-
-    // Bygg SVG-kart for rapporten
-    const mapColors = ["#cc0000","#e67300","#ccaa00","#2d8a4e","#1a8a7a","#2266cc","#4444cc","#8833aa","#cc3377","#cc4400","#669900","#109977","#2277cc","#6633cc","#cc3366","#cc6600","#33aaaa","#88aa00"];
-    const allGPSPoints = [];
-    reportHoles.forEach(h => {
-      const teePos = TEE_POSITIONS[h.hole - 1];
-      if (teePos) allGPSPoints.push(teePos);
-      h.shots.forEach(s => { if (s.pos) allGPSPoints.push(s.pos); });
-    });
-
-    let mapSVG = "";
-    if (allGPSPoints.length >= 2) {
-      const lats = allGPSPoints.map(p => p.lat);
-      const lons = allGPSPoints.map(p => p.lon);
-      const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-      const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-      const padLat = (maxLat - minLat) * 0.15 || 0.0005;
-      const padLon = (maxLon - minLon) * 0.15 || 0.0005;
-      const W = 600, H = 400;
-      const toX = lon => ((lon - (minLon - padLon)) / ((maxLon + padLon) - (minLon - padLon))) * W;
-      const toY = lat => H - ((lat - (minLat - padLat)) / ((maxLat + padLat) - (minLat - padLat))) * H;
-
-      let svgContent = `<rect width="${W}" height="${H}" fill="#e8f0e0" rx="8"/>`;
-
-      // Tee-markørar
-      TEE_POSITIONS.forEach((t, i) => {
-        svgContent += `<circle cx="${toX(t.lon)}" cy="${toY(t.lat)}" r="4" fill="#ccc" stroke="none"/>`;
-        svgContent += `<text x="${toX(t.lon)}" y="${toY(t.lat) - 7}" text-anchor="middle" font-size="8" fill="#999" font-family="monospace">${i + 1}</text>`;
-      });
-
-      // Slag per hol
-      reportHoles.forEach(h => {
-        const teePos = TEE_POSITIONS[h.hole - 1];
-        const pts = h.shots.filter(s => s.pos);
-        const c = mapColors[(h.hole - 1) % mapColors.length];
-
-        // Linje frå tee til første ball
-        if (teePos && pts.length > 0) {
-          svgContent += `<line x1="${toX(teePos.lon)}" y1="${toY(teePos.lat)}" x2="${toX(pts[0].pos.lon)}" y2="${toY(pts[0].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
-        }
-
-        // Linjer mellom ballposisjonar
-        for (let i = 0; i < pts.length - 1; i++) {
-          svgContent += `<line x1="${toX(pts[i].pos.lon)}" y1="${toY(pts[i].pos.lat)}" x2="${toX(pts[i+1].pos.lon)}" y2="${toY(pts[i+1].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
-        }
-
-        // Ballpunkt
-        pts.forEach((s, i) => {
-          svgContent += `<circle cx="${toX(s.pos.lon)}" cy="${toY(s.pos.lat)}" r="${i === pts.length - 1 ? 5 : 3.5}" fill="${c}" stroke="${i === pts.length - 1 ? "white" : "none"}" stroke-width="1.5"/>`;
-        });
-      });
-
-      // Legende
-      const usedHoles = reportHoles.map(h => h.hole);
-      let legendX = 10;
-      usedHoles.forEach(n => {
-        const c = mapColors[(n - 1) % mapColors.length];
-        svgContent += `<circle cx="${legendX + 5}" cy="${H - 15}" r="5" fill="${c}"/>`;
-        svgContent += `<text x="${legendX + 14}" y="${H - 11}" font-size="10" fill="#333" font-family="sans-serif">H${n}</text>`;
-        legendX += 42;
-      });
-
-      mapSVG = `<h2>Slagkart</h2><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;border:1px solid #ccc;border-radius:8px;margin-bottom:16px">${svgContent}</svg>`;
-    }
-
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">
-      <style>
-        body { font-family: Georgia, serif; color: #1a1a1a; max-width: 700px; margin: 0 auto; padding: 20px 16px; }
-        h1 { color: #2d5a3d; font-size: 20px; margin-bottom: 2px; }
-        h2 { color: #2d5a3d; font-size: 14px; border-bottom: 2px solid #2d5a3d; padding-bottom: 3px; margin-top: 20px; }
-        h3 { font-size: 13px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 4px 8px; border: 1px solid #ddd; font-size: 12px; }
-        th { background: #2d5a3d; color: white; font-size: 11px; }
-        .summary { display: flex; gap: 12px; margin: 12px 0; }
-        .stat-box { background: #f4f7f5; border-radius: 6px; padding: 10px 14px; text-align: center; flex: 1; }
-        .stat-box .num { font-size: 24px; font-weight: 300; color: #2d5a3d; }
-        .stat-box .lbl { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.1em; }
-      </style></head><body>
-      <h1>⛳ Sunnfjord Golfklubb</h1>
-      <p style="color:#666;margin:0 0 14px;font-size:13px">${date} · ${tee === "yellow" ? "Gul" : "Raud"} tee</p>
-      <div class="summary">
-        <div class="stat-box"><div class="num">${rScore}</div><div class="lbl">Slag</div></div>
-        <div class="stat-box"><div class="num">${diffStr}</div><div class="lbl">Par ${rPar}</div></div>
-        <div class="stat-box"><div class="num">${reportHoles.length}</div><div class="lbl">Hol</div></div>
-      </div>
-      <h2>Scorekort</h2>
-      <table><tr><th>Hol</th><th>Par</th><th>Idx</th><th>Lengde</th><th>Score</th><th>Resultat</th></tr>${holeRows}</table>
-      ${mapSVG}
-      ${clubRows ? `<h2>Kølle-statistikk</h2><table><tr><th>Kølle</th><th>Slag</th><th>Snitt</th><th>Lengst</th></tr>${clubRows}</table>` : ""}
-      <h2>Slagdetaljar</h2>
-      ${shotDetails}
-      <p style="margin-top:20px;font-size:10px;color:#aaa;text-align:center">Sunnfjord GK Slagregistrering</p>
-    </body></html>`;
-  };
-
-  const finishRound = async () => {
-    // Samle alle hol — inkludert eventuelt pågåande (ufullført) hol
-    let reportHoles = [...holes];
-    if (currentShots.length > 0) {
-      reportHoles.push({
-        hole: currentHole,
-        shots: currentShots,
-        unfinished: true,
-      });
-    }
-
-    if (reportHoles.length === 0) return;
-
-    const rScore = reportHoles.reduce((s, h) => s + h.shots.length, 0);
-    const rPar = reportHoles.reduce((s, h) => s + COURSE_DATA[h.hole - 1].par, 0);
-    const rDiff = rScore - rPar;
-
-    const html = buildReportHTML(reportHoles);
-    const date = new Date().toISOString().slice(0, 10);
-    const time = new Date().toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
-    const filename = `Sunnfjord_GK_${date}_${rScore}slag.html`;
-
-    const newReport = {
-      filename, date, time,
-      holesPlayed: reportHoles.length,
-      score: rScore,
-      par: rPar,
-      diff: rDiff,
-      html,
-    };
-
-    const updatedReports = [newReport, ...savedReports];
-    setSavedReports(updatedReports);
-
-    // Lagre rapport og slett aktiv runde frå persistent storage
-    try {
-      await window.storage.set("golf-reports", JSON.stringify(updatedReports));
-      await window.storage.delete("golf-active-round");
-    } catch (e) {
-      console.error("Klarte ikkje lagre rapport:", e);
-    }
-
-    // Nullstill for ny runde
-    setHoles([]);
-    setCurrentHole(1);
-    setCurrentShots([]);
-    setSelectedClub(null);
-    setStep("club");
-    setLastPos(TEE_POSITIONS[0]);
-    setInHole(false);
-    setConfirmFinish(false);
-    setMessage(`📄 Rapport lagra: ${filename}`);
-    setView("reports");
-  };
+  // Avstand frå siste posisjon til green
+  const distToHole = lastPos && greenPos
+    ? Math.round(haversineDistance(lastPos.lat, lastPos.lon, greenPos.lat, greenPos.lon))
+    : null;
 
   const handleSelectClub = club => {
     setSelectedClub(club);
-    setInHole(false);
-    setStep("photo");
-    setMessage(`${club} valt — fotografer ballen`);
+    setStep("map");
+    setMessage(`${club} valt — trykk på kartet der ballen landa`);
   };
 
-  const handlePhoto = async e => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    
-    // Diagnostikk
-    const fileInfo = `${file.type || "ukjent type"}, ${Math.round(file.size/1024)}KB`;
-    
-    // 1. Prøv EXIF
-    const exif = await extractEXIF(file);
-    
-    // 2. Prøv geolocation som fallback
-    let geoPos = null;
-    if (!exif && navigator.geolocation) {
-      geoPos = await new Promise(resolve => {
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-          () => resolve(null),
-          { enableHighAccuracy: true, timeout: 5000, maximumAge: 2000 }
-        );
-      });
-    }
-    
-    const gps = exif || geoPos;
-    const gpsSource = exif ? "EXIF" : geoPos ? "GPS" : null;
-    
+  const handlePlaceBall = useCallback((pos) => {
+    if (step !== "map" || !selectedClub) return;
+
     let distance = null;
-    if (lastPos && gps) {
-      distance = Math.round(haversineDistance(lastPos.lat, lastPos.lon, gps.lat, gps.lon));
-      if (distance < 3) distance = null;
+    if (lastPos) {
+      distance = Math.round(haversineDistance(lastPos.lat, lastPos.lon, pos.lat, pos.lon));
+      if (distance < 1) distance = null;
     }
-    
-    // Oppdater GPS-status
-    if (gps) {
-      setGpsStatus("ok");
-      setGpsCoords(gps);
-      setGpsAccuracy(gpsSource);
-    }
-    const shot = {
-      club: selectedClub, pos: gps, distance,
-      shotNumber: currentShots.length + 1,
-    };
+    const toHole = greenPos
+      ? Math.round(haversineDistance(pos.lat, pos.lon, greenPos.lat, greenPos.lon))
+      : null;
+
+    const shot = { club: selectedClub, pos, distance, toHole, shotNumber: currentShots.length + 1 };
     const updatedShots = [...currentShots, shot];
 
     if (inHole) {
-      // Ballen er i holet — fullfør automatisk
       const score = updatedShots.length;
       const diff = score - holeInfo.par;
-      const label = diff <= -2 ? "Eagle!" : diff === -1 ? "Birdie!" :
-        diff === 0 ? "Par" : diff === 1 ? "Bogey" :
-        diff === 2 ? "Dobbel-bogey" : `+${diff}`;
+      const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;
       setHoles(prev => [...prev, { hole: currentHole, shots: updatedShots }]);
       setCurrentShots([]);
       setCurrentHole(h => h + 1);
-      setStep("club");
-      setSelectedClub(null);
-      setInHole(false);
-      // Set lastPos to next hole's tee position
+      setStep("club"); setSelectedClub(null); setInHole(false);
       const nextHole = currentHole + 1;
-      setLastPos(nextHole <= 18 ? TEE_POSITIONS[nextHole - 1] : null);
-      const distText = distance ? ` (${distance}m)` : "";
-      const diagText = `\n📋 Fil: ${fileInfo} | EXIF: ${exif ? "ja" : "nei"} | Geo: ${geoPos ? "ja" : "nei"}`;
-      setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label} ${distText}${diagText}`);
+      setLastPos(nextHole <= 18 ? TEE_POSITIONS[nextHole-1] : null);
+      setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}${distance ? ` (siste: ${distance}m)` : ""}`);
     } else {
       setCurrentShots(updatedShots);
-      if (gps) setLastPos(gps);
+      setLastPos(pos);
       setSelectedClub(null);
       setStep("club");
       const distText = distance ? ` — ${distance}m` : "";
-      const diagText = `\n📋 Fil: ${fileInfo} | EXIF: ${exif ? "ja" : "nei"} | Geo: ${geoPos ? "ja" : "nei"}`;
-      setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${diagText}`);
+      const toHoleText = toHole ? ` · ${toHole}m att` : "";
+      setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
     }
-  };
+  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo]);
 
   const undoLast = () => {
     if (currentShots.length === 0) return;
-    const removed = currentShots[currentShots.length - 1];
-    const newShots = currentShots.slice(0, -1);
+    const removed = currentShots[currentShots.length-1];
+    const newShots = currentShots.slice(0,-1);
     setCurrentShots(newShots);
-    setLastPos(newShots.length > 0 ? newShots[newShots.length - 1].pos : TEE_POSITIONS[currentHole - 1]);
-    setStep("club");
-    setSelectedClub(null);
+    setLastPos(newShots.length > 0 ? newShots[newShots.length-1].pos : TEE_POSITIONS[currentHole-1]);
+    setStep("club"); setSelectedClub(null);
     setMessage(`↩ Fjerna slag ${removed.shotNumber} (${removed.club})`);
   };
 
+  const finishRound = () => {
+    let reportHoles = [...holes];
+    if (currentShots.length > 0) reportHoles.push({ hole: currentHole, shots: currentShots, unfinished: true });
+    if (reportHoles.length === 0) return;
+    const rScore = reportHoles.reduce((s,h)=>s+h.shots.length,0);
+    const rPar = reportHoles.reduce((s,h)=>s+COURSE_DATA[h.hole-1].par,0);
+    const html = buildReportHTML(reportHoles, tee);
+    const date = new Date().toISOString().slice(0,10);
+    const time = new Date().toLocaleTimeString("nb-NO",{hour:"2-digit",minute:"2-digit"});
+    const filename = `Sunnfjord_GK_${date}_${rScore}slag.html`;
+    const newReport = { filename, date, time, holesPlayed: reportHoles.length, score: rScore, par: rPar, diff: rScore-rPar, html };
+    const updated = [newReport, ...savedReports];
+    setSavedReports(updated);
+    try { localStorage.setItem("golf-reports", JSON.stringify(updated)); localStorage.removeItem("golf-active-round"); } catch(e){}
+    setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
+    setStep("club"); setLastPos(TEE_POSITIONS[0]); setInHole(false); setConfirmFinish(false);
+    setMessage(`📄 Rapport lagra: ${filename}`); setView("reports");
+  };
+
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#f5f5f0",
-      fontFamily: "'Georgia', 'Times New Roman', serif",
-      color: "#1a1a1a",
-    }}>
+    <div style={{ minHeight: "100vh", background: "#f5f5f0", fontFamily: "'Georgia', serif", color: "#1a1a1a" }}>
       {/* Header */}
-      <div style={{
-        background: "#1a3a25",
-        padding: "18px 16px 14px",
-        borderBottom: "3px solid #c8b48c",
-      }}>
+      <div style={{ background: "#1a3a25", padding: "16px 14px 12px", borderBottom: "3px solid #c8b48c" }}>
         <div style={{ maxWidth: 520, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <h1 style={{
-                margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "0.04em",
-                textTransform: "uppercase", color: "#fff",
-                fontFamily: "'Palatino', 'Book Antiqua', serif",
-              }}>Sunnfjord GK</h1>
-              <p style={{ margin: "2px 0 0", fontSize: 14, color: "rgba(255,255,255,0.7)", letterSpacing: "0.05em", fontWeight: 600 }}>
+              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#fff" }}>Sunnfjord GK</h1>
+              <p style={{ margin: "2px 0 0", fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 600 }}>
                 Hol {currentHole}/18
-                {holes.length > 0 && (
-                  <span style={{ color: scoreDiff > 0 ? "#ff8a8a" : scoreDiff < 0 ? "#8eff8e" : "#8ad4ff", marginLeft: 8 }}>
-                    {scoreDiff > 0 ? `+${scoreDiff}` : scoreDiff === 0 ? "E" : scoreDiff}
-                  </span>
-                )}
+                {holes.length > 0 && <span style={{ color: scoreDiff>0?"#ff8a8a":scoreDiff<0?"#8eff8e":"#8ad4ff", marginLeft: 8 }}>{scoreDiff>0?`+${scoreDiff}`:scoreDiff===0?"E":scoreDiff}</span>}
               </p>
             </div>
-            <div style={{ display: "flex", gap: 5 }}>
-              {[
-                { key: "play", icon: "🏌️" },
-                { key: "map", icon: "🗺️" },
-                { key: "scorecard", icon: "📋" },
-                { key: "stats", icon: "📊" },
-                { key: "reports", icon: "📄" },
-              ].map(tab => (
-                <button key={tab.key} onClick={() => setView(tab.key)} style={{
-                  width: 40, height: 40, borderRadius: 8, border: "none",
-                  background: view === tab.key ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)",
-                  fontSize: 18, cursor: "pointer",
-                  outline: view === tab.key ? "2px solid #fff" : "none",
-                  position: "relative",
+            <div style={{ display: "flex", gap: 4 }}>
+              {[{key:"play",icon:"🏌️"},{key:"scorecard",icon:"📋"},{key:"stats",icon:"📊"},{key:"reports",icon:"📄"}].map(tab => (
+                <button key={tab.key} onClick={()=>setView(tab.key)} style={{
+                  width: 38, height: 38, borderRadius: 8, border: "none",
+                  background: view===tab.key?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",
+                  fontSize: 17, cursor: "pointer", outline: view===tab.key?"2px solid #fff":"none", position: "relative",
                 }}>
                   {tab.icon}
-                  {tab.key === "reports" && savedReports.length > 0 && (
-                    <span style={{
-                      position: "absolute", top: -3, right: -3,
-                      width: 18, height: 18, borderRadius: "50%",
-                      background: "#ff6b6b", color: "#fff",
-                      fontSize: 10, fontWeight: 700,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>{savedReports.length}</span>
-                  )}
+                  {tab.key==="reports"&&savedReports.length>0&&<span style={{ position: "absolute", top: -3, right: -3, width: 16, height: 16, borderRadius: "50%", background: "#ff6b6b", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{savedReports.length}</span>}
                 </button>
               ))}
             </div>
@@ -887,357 +553,156 @@ function GolfShotTracker() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 520, margin: "0 auto", padding: "14px" }}>
-
-        {/* ─── PLAY VIEW ─── */}
+      <div style={{ maxWidth: 520, margin: "0 auto", padding: "12px" }}>
+        {/* PLAY VIEW */}
         {view === "play" && (
           <>
-            {/* Hole info */}
+            {/* Hol-info */}
             {holeInfo && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 12,
-                padding: "14px 18px", marginBottom: 14,
-                background: "#fff", borderRadius: 12,
-                border: "2px solid #1a3a25",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", marginBottom: 10, background: "#fff", borderRadius: 12, border: "2px solid #1a3a25" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 26, fontWeight: 700, color: "#1a3a25", fontFamily: "'Palatino', serif" }}>
-                    Hol {currentHole}
-                  </div>
-                  <div style={{ fontSize: 14, color: "#666", fontWeight: 600 }}>Index {holeInfo.index}</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#1a3a25" }}>Hol {currentHole}</div>
+                  <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Index {holeInfo.index}</div>
                 </div>
-                <div style={{ textAlign: "center", padding: "0 14px" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: "#1a3a25" }}>{holeInfo.par}</div>
-                  <div style={{ fontSize: 11, color: "#888", letterSpacing: "0.1em", fontWeight: 700 }}>PAR</div>
+                <div style={{ textAlign: "center", padding: "0 12px" }}>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: "#1a3a25" }}>{holeInfo.par}</div>
+                  <div style={{ fontSize: 10, color: "#888", fontWeight: 700 }}>PAR</div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>
-                    <span style={{
-                      width: 14, height: 14, borderRadius: 3,
-                      background: tee === "yellow" ? "#e6c200" : "#cc0000",
-                      display: "inline-block",
-                      border: "1px solid rgba(0,0,0,0.2)",
-                    }} />
-                    {tee === "yellow" ? holeInfo.yellowM : holeInfo.redM}m
+                  <div style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a" }}>
+                    <span style={{ width: 12, height: 12, borderRadius: 2, background: tee==="yellow"?"#e6c200":"#cc0000", display: "inline-block", marginRight: 5, border: "1px solid rgba(0,0,0,0.2)" }} />
+                    {tee==="yellow"?holeInfo.yellowM:holeInfo.redM}m
                   </div>
-                  <button onClick={() => setTee(t => t === "yellow" ? "red" : "yellow")}
-                    style={{ fontSize: 12, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 4, textDecoration: "underline", fontWeight: 600 }}>
-                    Byt tee
-                  </button>
+                  {distToHole != null && (
+                    <div style={{ fontSize: 13, color: "#2d8a4e", fontWeight: 700, marginTop: 2 }}>⛳ {distToHole}m att</div>
+                  )}
+                  <button onClick={()=>setTee(t=>t==="yellow"?"red":"yellow")} style={{ fontSize: 11, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, textDecoration: "underline", fontWeight: 600 }}>Byt tee</button>
                 </div>
               </div>
             )}
 
-            {/* GPS Status */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "10px 16px", marginBottom: 10,
-              background: gpsStatus === "ok" ? "#e8f5e9" : "#fff8e1",
-              border: `2px solid ${gpsStatus === "ok" ? "#4a8c5c" : "#e6a800"}`,
-              borderRadius: 10,
-            }}>
-              <span style={{ fontSize: 20 }}>
-                {gpsStatus === "ok" ? "📍" : "⏳"}
-              </span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>
-                  {gpsStatus === "ok" && `GPS aktiv (${gpsAccuracy || ""})`}
-                  {gpsStatus === "waiting" && "Ventar på GPS — ta eit bilde for å aktivere"}
+            {/* Melding */}
+            {message && <div style={{ background: "#e8f5e9", border: "2px solid #4a8c5c", borderRadius: 10, padding: "12px 16px", marginBottom: 10, fontSize: 15, lineHeight: 1.5, color: "#1a3a25", fontWeight: 600 }}>{message}</div>}
+
+            {/* Kart — alltid synleg */}
+            <div style={{ marginBottom: 10 }}>
+              <GolfMap currentHole={currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} />
+              {step === "map" && (
+                <div style={{ textAlign: "center", marginTop: 6, fontSize: 14, fontWeight: 700, color: "#1a3a25" }}>
+                  👆 Trykk på kartet der ballen landa
                 </div>
-                {gpsStatus === "ok" && gpsCoords && (
-                  <div style={{ fontSize: 11, color: "#666" }}>
-                    {gpsCoords.lat.toFixed(5)}, {gpsCoords.lon.toFixed(5)}
-                  </div>
-                )}
-                {gpsStatus === "waiting" && (
-                  <div style={{ fontSize: 11, color: "#996600" }}>
-                    GPS-posisjon vert henta frå biletet (EXIF)
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
-            {/* Status */}
-            {message && (
-              <div style={{
-                background: "#e8f5e9", border: "2px solid #4a8c5c",
-                borderRadius: 10, padding: "14px 18px", marginBottom: 14, fontSize: 16, lineHeight: 1.5,
-                color: "#1a3a25", fontWeight: 600,
-              }}>{message}</div>
-            )}
-
-            {/* Current shots */}
+            {/* Slag-liste */}
             {currentShots.length > 0 && (
-              <div style={{ marginBottom: 14 }}>
+              <div style={{ marginBottom: 10 }}>
                 {currentShots.map((s, i) => (
-                  <div key={i} style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "12px 16px", marginBottom: 5,
-                    background: "#fff",
-                    border: "1px solid #ccc",
-                    borderRadius: 8, fontSize: 16,
-                  }}>
-                    <span style={{
-                      width: 30, height: 30, borderRadius: "50%",
-                      background: "#1a3a25",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 14, color: "#fff", fontWeight: 700, flexShrink: 0,
-                    }}>{s.shotNumber}</span>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", marginBottom: 4, background: "#fff", border: "1px solid #ccc", borderRadius: 8, fontSize: 15 }}>
+                    <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#1a3a25", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, flexShrink: 0 }}>{s.shotNumber}</span>
                     <span style={{ flex: 1, fontWeight: 600 }}>{s.club}</span>
-                    {s.distance ? (
-                      <span style={{ color: "#1a3a25", fontFamily: "monospace", fontWeight: 700, fontSize: 18 }}>{s.distance}m</span>
-                    ) : (
-                      <span style={{ fontSize: 14, color: "#999" }}>–</span>
-                    )}
+                    {s.distance && <span style={{ color: "#1a3a25", fontFamily: "monospace", fontWeight: 700 }}>{s.distance}m</span>}
+                    {s.toHole != null && <span style={{ color: "#2d8a4e", fontSize: 12, fontWeight: 600 }}>⛳{s.toHole}m</span>}
                   </div>
                 ))}
               </div>
             )}
 
-            {/* STEP 1: Select Club */}
+            {/* Vel kølle */}
             {step === "club" && (
               <div>
-                <div style={{
-                  fontSize: 14, letterSpacing: "0.08em", textTransform: "uppercase",
-                  color: "#666", fontWeight: 700, marginBottom: 10, textAlign: "center",
-                }}>
-                  Slag {currentShots.length + 1} — Vel kølle
+                <div style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: "#666", fontWeight: 700, marginBottom: 8, textAlign: "center" }}>
+                  Slag {currentShots.length+1} — Vel kølle
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+
+                {/* Ballen er i holet toggle */}
+                <button onClick={()=>setInHole(v=>!v)} style={{
+                  width: "100%", padding: "14px 16px", marginBottom: 8,
+                  background: inHole?"#fff3cd":"#fff", border: inHole?"3px solid #e6a800":"2px solid #ccc",
+                  borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                }}>
+                  <span style={{ width: 30, height: 30, borderRadius: "50%", background: inHole?"#e6a800":"#eee", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{inHole?"⛳":"○"}</span>
+                  <span style={{ fontSize: 16, color: inHole?"#8a6500":"#888", fontWeight: 700 }}>Ballen er i holet</span>
+                </button>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                   {CLUBS.map(club => (
-                    <button key={club} onClick={() => handleSelectClub(club)} style={{
-                      padding: "16px 4px", borderRadius: 10, cursor: "pointer",
-                      background: "#fff",
-                      border: "2px solid #1a3a25",
-                      color: "#1a3a25", fontSize: 15, fontWeight: 700, textAlign: "center",
-                      boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-                    }}
-                    >{club}</button>
+                    <button key={club} onClick={()=>handleSelectClub(club)} style={{
+                      padding: "14px 4px", borderRadius: 10, cursor: "pointer", background: "#fff",
+                      border: "2px solid #1a3a25", color: "#1a3a25", fontSize: 14, fontWeight: 700, textAlign: "center",
+                    }}>{club}</button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* STEP 2: Photograph ball */}
-            {step === "photo" && (
-              <>
-                {/* In-hole toggle */}
-                <button onClick={() => setInHole(v => !v)} style={{
-                  width: "100%", padding: "16px 18px", marginBottom: 12,
-                  background: inHole ? "#fff3cd" : "#fff",
-                  border: inHole ? "3px solid #e6a800" : "2px solid #ccc",
-                  borderRadius: 12, cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 14,
-                }}>
-                  <span style={{
-                    width: 34, height: 34, borderRadius: "50%",
-                    background: inHole ? "#e6a800" : "#eee",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 20,
-                  }}>
-                    {inHole ? "⛳" : "○"}
-                  </span>
-                  <span style={{
-                    fontSize: 18,
-                    color: inHole ? "#8a6500" : "#888",
-                    fontWeight: 700,
-                  }}>
-                    Ballen er i holet
-                  </span>
-                </button>
-
-                <input ref={photoRef} type="file" accept="image/*" capture="environment"
-                  onChange={handlePhoto} style={{ display: "none" }} />
-                <button onClick={() => photoRef.current?.click()} style={{
-                  width: "100%", padding: "28px",
-                  background: inHole ? "#fff3cd" : "#e8f5e9",
-                  border: inHole ? "3px solid #e6a800" : "3px solid #4a8c5c",
-                  borderRadius: 14,
-                  color: inHole ? "#8a6500" : "#1a3a25",
-                  fontSize: 20, fontWeight: 700, cursor: "pointer",
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-                  boxShadow: "0 3px 10px rgba(0,0,0,0.15)",
-                }}>
-                  <span style={{ fontSize: 44 }}>{inHole ? "⛳" : "📸"}</span>
-                  <span>{inHole ? "Fotografer ballen i holet" : "Fotografer ballen"}</span>
-                  <span style={{ fontSize: 15, opacity: 0.7 }}>
-                    {selectedClub} · Slag {currentShots.length + 1}
-                    {inHole ? " · Avsluttar holet" : ""}
-                  </span>
-                </button>
-                <button onClick={() => { setStep("club"); setSelectedClub(null); setInHole(false); }}
-                  style={{
-                    width: "100%", marginTop: 10, padding: "12px",
-                    background: "#fff", border: "2px solid #ccc",
-                    borderRadius: 8, color: "#666", fontSize: 15, fontWeight: 600, cursor: "pointer",
-                  }}>
-                  ← Vel anna kølle
-                </button>
-              </>
+            {/* Map step — vel anna kølle */}
+            {step === "map" && (
+              <button onClick={()=>{setStep("club");setSelectedClub(null);setInHole(false);}} style={{
+                width: "100%", marginTop: 6, padding: "12px", background: "#fff", border: "2px solid #ccc",
+                borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer",
+              }}>← Vel anna kølle</button>
             )}
 
-            {/* Undo */}
+            {/* Angre */}
             {currentShots.length > 0 && step === "club" && (
-              <div style={{ marginTop: 14 }}>
-                <button onClick={undoLast} style={{
-                  width: "100%", padding: "14px",
-                  background: "#fff", border: "2px solid #ccc",
-                  borderRadius: 10, color: "#666", fontSize: 15, fontWeight: 600, cursor: "pointer",
-                }}>
-                  ↩ Angre siste slag
-                </button>
-              </div>
+              <button onClick={undoLast} style={{ width: "100%", marginTop: 10, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 10, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>↩ Angre siste slag</button>
             )}
           </>
         )}
 
-        {/* ─── MAP VIEW ─── */}
-        {view === "map" && (
-          <CourseMap holes={holes} currentShots={currentShots} currentHole={currentHole} />
-        )}
+        {view === "scorecard" && <Scorecard holes={holes} currentHole={currentHole} currentShots={currentShots} tee={tee} />}
 
-        {/* ─── SCORECARD ─── */}
-        {view === "scorecard" && (
-          <Scorecard holes={holes} currentHole={currentHole} currentShots={currentShots} tee={tee} />
-        )}
-
-        {/* ─── STATS ─── */}
         {view === "stats" && (
           <div>
-            <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.35, marginBottom: 14 }}>
-              Kølle-statistikk
-            </div>
-            {(() => {
-              const all = [...holes.flatMap(h => h.shots), ...currentShots];
-              const cs = {};
-              all.forEach(s => {
-                if (!cs[s.club]) cs[s.club] = { count: 0, dists: [] };
-                cs[s.club].count++;
-                if (s.distance) cs[s.club].dists.push(s.distance);
-              });
-              const entries = Object.entries(cs).sort((a, b) => {
-                const aA = a[1].dists.length ? a[1].dists.reduce((s,d)=>s+d,0)/a[1].dists.length : 0;
-                const bA = b[1].dists.length ? b[1].dists.reduce((s,d)=>s+d,0)/b[1].dists.length : 0;
-                return bA - aA;
-              });
-              if (!entries.length) return (
-                <div style={{ textAlign: "center", opacity: 0.4, padding: 30, fontSize: 13 }}>Ingen slag registrert enno</div>
-              );
-              const maxD = Math.max(...entries.flatMap(([,v]) => v.dists), 1);
-              return entries.map(([club, st]) => {
-                const avg = st.dists.length ? Math.round(st.dists.reduce((s,d)=>s+d,0)/st.dists.length) : null;
-                const mx = st.dists.length ? Math.max(...st.dists) : null;
-                return (
-                  <div key={club} style={{
-                    padding: "12px 14px", marginBottom: 6,
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid rgba(200,180,140,0.08)", borderRadius: 8,
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                      <span style={{ fontSize: 14, color: "#c8b48c" }}>{club}</span>
-                      <span style={{ fontSize: 12, opacity: 0.5 }}>{st.count} slag</span>
-                    </div>
-                    {avg != null && (
-                      <>
-                        <div style={{ height: 6, borderRadius: 3, background: "rgba(200,180,140,0.1)", overflow: "hidden", marginBottom: 4 }}>
-                          <div style={{ height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #4a8c5c, #7cb88a)", width: `${(avg/maxD)*100}%` }} />
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, opacity: 0.5 }}>
-                          <span>Snitt: <b style={{ color: "#7cb88a" }}>{avg}m</b></span>
-                          <span>Lengst: <b style={{ color: "#c8b48c" }}>{mx}m</b></span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
+            <div style={{ fontSize: 13, color: "#666", fontWeight: 700, marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>Kølle-statistikk</div>
+            {(()=>{
+              const all=[...holes.flatMap(h=>h.shots),...currentShots]; const cs={};
+              all.forEach(s=>{if(!cs[s.club])cs[s.club]={count:0,dists:[]};cs[s.club].count++;if(s.distance)cs[s.club].dists.push(s.distance);});
+              const entries=Object.entries(cs).sort((a,b)=>{const aA=a[1].dists.length?a[1].dists.reduce((s,d)=>s+d,0)/a[1].dists.length:0;const bA=b[1].dists.length?b[1].dists.reduce((s,d)=>s+d,0)/b[1].dists.length:0;return bA-aA;});
+              if(!entries.length)return <div style={{textAlign:"center",color:"#999",padding:30,fontSize:14}}>Ingen slag enno</div>;
+              const maxD=Math.max(...entries.flatMap(([,v])=>v.dists),1);
+              return entries.map(([club,st])=>{
+                const avg=st.dists.length?Math.round(st.dists.reduce((s,d)=>s+d,0)/st.dists.length):null;
+                const mx=st.dists.length?Math.max(...st.dists):null;
+                return (<div key={club} style={{padding:"12px 14px",marginBottom:6,background:"#fff",border:"1px solid #ddd",borderRadius:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:15,color:"#1a3a25",fontWeight:700}}>{club}</span><span style={{fontSize:13,color:"#666"}}>{st.count} slag</span></div>
+                  {avg!=null&&<><div style={{height:6,borderRadius:3,background:"#e0e0d8",overflow:"hidden",marginBottom:4}}><div style={{height:"100%",borderRadius:3,background:"linear-gradient(90deg,#1a3a25,#4a8c5c)",width:`${(avg/maxD)*100}%`}}/></div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#666"}}><span>Snitt: <b style={{color:"#1a3a25"}}>{avg}m</b></span><span>Lengst: <b style={{color:"#1a3a25"}}>{mx}m</b></span></div></>}
+                </div>);
               });
             })()}
-            {holes.length > 0 && (
-              <div style={{ marginTop: 20, padding: 16, textAlign: "center", background: "rgba(200,180,140,0.06)", borderRadius: 10, border: "1px solid rgba(200,180,140,0.12)" }}>
-                <div style={{ fontSize: 36, fontWeight: 300, color: "#c8b48c", fontFamily: "monospace" }}>{totalScore}</div>
-                <div style={{ fontSize: 14, marginTop: 2, color: scoreDiff > 0 ? "#ff6b6b" : scoreDiff < 0 ? "#69db7c" : "#4dabf7" }}>
-                  {scoreDiff > 0 ? `+${scoreDiff}` : scoreDiff === 0 ? "Even par" : scoreDiff}
-                </div>
-                <div style={{ fontSize: 11, opacity: 0.4, marginTop: 4 }}>{holes.length} hol spelt av 18</div>
-              </div>
-            )}
-          </div>
-        )}
-        {/* ─── AVSLUTT RUNDE ─── */}
-        {(holes.length > 0 || currentShots.length > 0) && (
-          <div style={{ marginTop: 24, paddingTop: 20, borderTop: "2px solid #ddd" }}>
-            {!confirmFinish ? (
-              <button onClick={() => setConfirmFinish(true)} style={{
-                width: "100%", padding: "16px",
-                background: "#fff",
-                border: "2px solid #cc4444",
-                borderRadius: 10, color: "#cc4444", fontSize: 15, fontWeight: 600, cursor: "pointer",
-              }}>
-                Avslutt runde og lagre rapport
-              </button>
-            ) : (
-              <div style={{
-                background: "#fff",
-                border: "2px solid #cc4444",
-                borderRadius: 12, padding: "20px", textAlign: "center",
-              }}>
-                <div style={{ fontSize: 18, marginBottom: 4, color: "#1a1a1a", fontWeight: 700 }}>
-                  Avslutte runden?
-                </div>
-                <div style={{ fontSize: 14, color: "#666", marginBottom: 16 }}>
-                  {holes.length} hol · {totalScore} slag · Rapport vert lagra
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => setConfirmFinish(false)} style={{
-                    flex: 1, padding: "14px",
-                    background: "#fff", border: "2px solid #ccc",
-                    borderRadius: 8, color: "#666", fontSize: 15, fontWeight: 600, cursor: "pointer",
-                  }}>
-                    Avbryt
-                  </button>
-                  <button onClick={finishRound} style={{
-                    flex: 2, padding: "14px",
-                    background: "#cc4444",
-                    border: "2px solid #cc4444",
-                    borderRadius: 8, color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer",
-                  }}>
-                    📄 Avslutt og lagre
-                  </button>
-                </div>
-              </div>
-            )}
+            {holes.length>0&&<div style={{marginTop:20,padding:16,textAlign:"center",background:"#fff",borderRadius:10,border:"2px solid #1a3a25"}}><div style={{fontSize:36,fontWeight:300,color:"#1a3a25",fontFamily:"monospace"}}>{totalScore}</div><div style={{fontSize:14,marginTop:2,color:scoreDiff>0?"#cc0000":scoreDiff<0?"#1a7a1a":"#0066cc",fontWeight:700}}>{scoreDiff>0?`+${scoreDiff}`:scoreDiff===0?"Even par":scoreDiff}</div><div style={{fontSize:12,color:"#888",marginTop:4}}>{holes.length} hol spelt av 18</div></div>}
           </div>
         )}
 
-        {/* ─── REPORTS VIEW ─── */}
-        {view === "reports" && (
+        {/* Avslutt runde */}
+        {(holes.length>0||currentShots.length>0)&&(
+          <div style={{marginTop:20,paddingTop:16,borderTop:"2px solid #ddd"}}>
+            {!confirmFinish?<button onClick={()=>setConfirmFinish(true)} style={{width:"100%",padding:"14px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:15,fontWeight:600,cursor:"pointer"}}>Avslutt runde og lagre rapport</button>
+            :<div style={{background:"#fff",border:"2px solid #cc4444",borderRadius:12,padding:"20px",textAlign:"center"}}>
+              <div style={{fontSize:18,fontWeight:700,color:"#1a1a1a",marginBottom:4}}>Avslutte runden?</div>
+              <div style={{fontSize:14,color:"#666",marginBottom:16}}>{holes.length} hol · {totalScore} slag</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setConfirmFinish(false)} style={{flex:1,padding:"14px",background:"#fff",border:"2px solid #ccc",borderRadius:8,color:"#666",fontSize:15,fontWeight:600,cursor:"pointer"}}>Avbryt</button>
+                <button onClick={finishRound} style={{flex:2,padding:"14px",background:"#cc4444",border:"2px solid #cc4444",borderRadius:8,color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>📄 Avslutt og lagre</button>
+              </div>
+            </div>}
+          </div>
+        )}
+
+        {/* Rapportar */}
+        {view==="reports"&&(
           <div>
-            <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.35, marginBottom: 14 }}>
-              Lagra rapportar
-            </div>
-            {loadingReports ? (
-              <div style={{ textAlign: "center", opacity: 0.4, padding: 30, fontSize: 13 }}>
-                Lastar rapportar...
-              </div>
-            ) : savedReports.length === 0 ? (
-              <div style={{ textAlign: "center", opacity: 0.4, padding: 30, fontSize: 13 }}>
-                Ingen rapportar enno. Avslutt ei runde for å lagre.
-              </div>
-            ) : (
-              savedReports.map((r, i) => (
-                <ReportItem key={`${r.date}-${r.time}-${i}`} report={r} index={i}
-                  savedReports={savedReports} setSavedReports={setSavedReports} />
-              ))
-            )}
+            <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:14,textTransform:"uppercase",letterSpacing:"0.08em"}}>Lagra rapportar</div>
+            {savedReports.length===0?<div style={{textAlign:"center",color:"#999",padding:30,fontSize:14}}>Ingen rapportar enno</div>
+            :savedReports.map((r,i)=><ReportItem key={`${r.date}-${r.time}-${i}`} report={r} index={i} savedReports={savedReports} setSavedReports={setSavedReports}/>)}
           </div>
         )}
-
       </div>
     </div>
   );
 }
-
 
 ReactDOM.createRoot(document.getElementById("root")).render(<GolfShotTracker />);
 </script>

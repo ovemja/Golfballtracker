@@ -51,30 +51,48 @@ const CLUBS = [
   "PW", "GW", "SW", "LW", "Putter"
 ];
 
-// Tee-posisjonar (utslagsfelt) — estimerte
-const TEE_POSITIONS = [
-  { lat: 61.3825, lon: 6.5065 }, { lat: 61.3830, lon: 6.5072 },
-  { lat: 61.3843, lon: 6.5078 }, { lat: 61.3848, lon: 6.5085 },
-  { lat: 61.3855, lon: 6.5075 }, { lat: 61.3860, lon: 6.5068 },
-  { lat: 61.3852, lon: 6.5058 }, { lat: 61.3845, lon: 6.5050 },
-  { lat: 61.3838, lon: 6.5045 }, { lat: 61.3828, lon: 6.5088 },
-  { lat: 61.3835, lon: 6.5095 }, { lat: 61.3842, lon: 6.5100 },
-  { lat: 61.3850, lon: 6.5098 }, { lat: 61.3857, lon: 6.5092 },
-  { lat: 61.3862, lon: 6.5082 }, { lat: 61.3854, lon: 6.5070 },
-  { lat: 61.3847, lon: 6.5060 }, { lat: 61.3840, lon: 6.5052 },
+// Tee-posisjonar (GPS-oppmålte, konvertert frå EPSG:25833)
+const DEFAULT_TEE_POSITIONS = [
+  { lat: 61.487113, lon: 6.079887 },
+  { lat: 61.485851, lon: 6.075345 },
+  { lat: 61.483856, lon: 6.079363 },
+  { lat: 61.483592, lon: 6.079435 },
+  { lat: 61.484416, lon: 6.082594 },
+  { lat: 61.481799, lon: 6.080841 },
+  { lat: 61.484164, lon: 6.083977 },
+  { lat: 61.482616, lon: 6.081337 },
+  { lat: 61.484767, lon: 6.08487 },
+  { lat: 61.486882, lon: 6.079776 },
+  { lat: 61.485685, lon: 6.075964 },
+  { lat: 61.484, lon: 6.079223 },
+  { lat: 61.483718, lon: 6.079842 },
+  { lat: 61.484394, lon: 6.082539 },
+  { lat: 61.48195, lon: 6.081292 },
+  { lat: 61.484058, lon: 6.083931 },
+  { lat: 61.482616, lon: 6.081337 },
+  { lat: 61.4848, lon: 6.084791 }
 ];
 
-// Green-posisjonar (holkoppar) — estimerte
-const GREEN_POSITIONS = [
-  { lat: 61.3838, lon: 6.5068 }, { lat: 61.3848, lon: 6.5078 },
-  { lat: 61.3848, lon: 6.5082 }, { lat: 61.3862, lon: 6.5072 },
-  { lat: 61.3862, lon: 6.5082 }, { lat: 61.3850, lon: 6.5058 },
-  { lat: 61.3845, lon: 6.5055 }, { lat: 61.3835, lon: 6.5048 },
-  { lat: 61.3828, lon: 6.5055 }, { lat: 61.3835, lon: 6.5082 },
-  { lat: 61.3845, lon: 6.5090 }, { lat: 61.3850, lon: 6.5095 },
-  { lat: 61.3862, lon: 6.5088 }, { lat: 61.3858, lon: 6.5078 },
-  { lat: 61.3852, lon: 6.5065 }, { lat: 61.3848, lon: 6.5062 },
-  { lat: 61.3840, lon: 6.5055 }, { lat: 61.3832, lon: 6.5048 },
+// Green-posisjonar (estimerte frå tee-par og avstandar)
+const DEFAULT_GREEN_POSITIONS = [
+  { lat: 61.485167, lon: 6.078952 },
+  { lat: 61.484168, lon: 6.081619 },
+  { lat: 61.482801, lon: 6.080389 },
+  { lat: 61.485412, lon: 6.085315 },
+  { lat: 61.485722, lon: 6.08586 },
+  { lat: 61.480091, lon: 6.07574 },
+  { lat: 61.485088, lon: 6.084378 },
+  { lat: 61.484657, lon: 6.081337 },
+  { lat: 61.483183, lon: 6.088661 },
+  { lat: 61.485167, lon: 6.078952 },
+  { lat: 61.484168, lon: 6.081619 },
+  { lat: 61.482801, lon: 6.080389 },
+  { lat: 61.485412, lon: 6.085315 },
+  { lat: 61.485722, lon: 6.08586 },
+  { lat: 61.480091, lon: 6.07574 },
+  { lat: 61.485088, lon: 6.084378 },
+  { lat: 61.484657, lon: 6.081337 },
+  { lat: 61.483183, lon: 6.088661 }
 ];
 
 const MAP_COLORS = [
@@ -84,7 +102,7 @@ const MAP_COLORS = [
   "#cc6600","#33aaaa","#88aa00",
 ];
 
-const COURSE_CENTER = { lat: 61.3845, lon: 6.5072 };
+const COURSE_CENTER = { lat: 61.484238, lon: 6.080908 };
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
@@ -104,13 +122,13 @@ function scoreLabel(score, par) {
 }
 
 // ─── Leaflet Map Component ───
-function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes }) {
+function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
 
-  const greenPos = GREEN_POSITIONS[currentHole - 1];
-  const teePos = TEE_POSITIONS[currentHole - 1];
+  const greenPos = greenPositions[currentHole - 1];
+  const teePos = teePositions[currentHole - 1];
 
   useEffect(() => {
     if (mapInstanceRef.current) return;
@@ -130,7 +148,8 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes }) {
 
     map.on('click', (e) => {
       const pos = { lat: e.latlng.lat, lon: e.latlng.lng };
-      if (window._golfOnPlaceBall) window._golfOnPlaceBall(pos);
+      if (window._golfOnCalibrateTap) window._golfOnCalibrateTap(pos);
+      else if (window._golfOnPlaceBall) window._golfOnPlaceBall(pos);
     });
 
     mapInstanceRef.current = map;
@@ -138,11 +157,12 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes }) {
     return () => { map.remove(); mapInstanceRef.current = null; };
   }, []);
 
-  // Oppdater callback ref
+  // Oppdater callback refs
   useEffect(() => {
-    window._golfOnPlaceBall = onPlaceBall;
-    return () => { window._golfOnPlaceBall = null; };
-  }, [onPlaceBall]);
+    window._golfOnPlaceBall = calibrateMode ? null : onPlaceBall;
+    window._golfOnCalibrateTap = calibrateMode ? onCalibrateTap : null;
+    return () => { window._golfOnPlaceBall = null; window._golfOnCalibrateTap = null; };
+  }, [onPlaceBall, calibrateMode, onCalibrateTap]);
 
   // Oppdater markørar og linjer
   useEffect(() => {
@@ -175,7 +195,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes }) {
     // Tidlegare hol (fullførte)
     holes.forEach(h => {
       const color = MAP_COLORS[(h.hole - 1) % MAP_COLORS.length];
-      const hTee = TEE_POSITIONS[h.hole - 1];
+      const hTee = teePositions[h.hole - 1];
       const pts = h.shots.filter(s => s.pos).map(s => [s.pos.lat, s.pos.lon]);
       if (hTee && pts.length > 0) {
         const line = L.polyline([[hTee.lat, hTee.lon], ...pts], {
@@ -241,7 +261,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes }) {
 }
 
 // ─── Report Builder ───
-function buildReportHTML(reportHoles, tee) {
+function buildReportHTML(reportHoles, tee, teePositions, greenPositions) {
   const date = new Date().toLocaleDateString("nb-NO", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const rScore = reportHoles.reduce((s, h) => s + h.shots.length, 0);
   const rPar = reportHoles.reduce((s, h) => s + COURSE_DATA[h.hole - 1].par, 0);
@@ -286,9 +306,9 @@ function buildReportHTML(reportHoles, tee) {
   // SVG-kart
   const allGPS = [];
   reportHoles.forEach(h => {
-    const tp = TEE_POSITIONS[h.hole-1]; if (tp) allGPS.push(tp);
+    const tp = teePositions[h.hole-1]; if (tp) allGPS.push(tp);
     h.shots.forEach(s => { if (s.pos) allGPS.push(s.pos); });
-    const gp = GREEN_POSITIONS[h.hole-1]; if (gp) allGPS.push(gp);
+    const gp = greenPositions[h.hole-1]; if (gp) allGPS.push(gp);
   });
   let mapSVG = "";
   if (allGPS.length >= 2) {
@@ -299,10 +319,10 @@ function buildReportHTML(reportHoles, tee) {
     const toX=lo=>((lo-(mnLo-pLo))/((mxLo+pLo)-(mnLo-pLo)))*W;
     const toY=la=>H-((la-(mnLa-pLa))/((mxLa+pLa)-(mnLa-pLa)))*H;
     let sv=`<rect width="${W}" height="${H}" fill="#e8f0e0" rx="8"/>`;
-    TEE_POSITIONS.forEach((t,i)=>{sv+=`<circle cx="${toX(t.lon)}" cy="${toY(t.lat)}" r="4" fill="#ccc"/><text x="${toX(t.lon)}" y="${toY(t.lat)-7}" text-anchor="middle" font-size="8" fill="#999" font-family="monospace">${i+1}</text>`;});
-    GREEN_POSITIONS.forEach((g,i)=>{sv+=`<circle cx="${toX(g.lon)}" cy="${toY(g.lat)}" r="3" fill="#2d8a4e" opacity="0.4"/>`;});
+    teePositions.forEach((t,i)=>{sv+=`<circle cx="${toX(t.lon)}" cy="${toY(t.lat)}" r="4" fill="#ccc"/><text x="${toX(t.lon)}" y="${toY(t.lat)-7}" text-anchor="middle" font-size="8" fill="#999" font-family="monospace">${i+1}</text>`;});
+    greenPositions.forEach((g,i)=>{sv+=`<circle cx="${toX(g.lon)}" cy="${toY(g.lat)}" r="3" fill="#2d8a4e" opacity="0.4"/>`;});
     reportHoles.forEach(h=>{
-      const tp=TEE_POSITIONS[h.hole-1], gp=GREEN_POSITIONS[h.hole-1];
+      const tp=teePositions[h.hole-1], gp=GREEN_POSITIONS[h.hole-1];
       const pts=h.shots.filter(s=>s.pos); const c=MAP_COLORS[(h.hole-1)%MAP_COLORS.length];
       if(tp&&pts.length>0) sv+=`<line x1="${toX(tp.lon)}" y1="${toY(tp.lat)}" x2="${toX(pts[0].pos.lon)}" y2="${toY(pts[0].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
       for(let i=0;i<pts.length-1;i++) sv+=`<line x1="${toX(pts[i].pos.lon)}" y1="${toY(pts[i].pos.lat)}" x2="${toX(pts[i+1].pos.lon)}" y2="${toY(pts[i+1].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
@@ -409,14 +429,21 @@ function GolfShotTracker() {
   const [message, setMessage] = useState("");
   const [view, setView] = useState("play");
   const [tee, setTee] = useState("yellow");
-  const [lastPos, setLastPos] = useState(TEE_POSITIONS[0]);
+  const [lastPos, setLastPos] = useState(DEFAULT_TEE_POSITIONS[0]);
   const [inHole, setInHole] = useState(false);
   const [savedReports, setSavedReports] = useState([]);
   const [confirmFinish, setConfirmFinish] = useState(false);
+  const [teePositions, setTeePositions] = useState([...DEFAULT_TEE_POSITIONS]);
+  const [greenPositions, setGreenPositions] = useState([...DEFAULT_GREEN_POSITIONS]);
+  const [calHole, setCalHole] = useState(1);
+  const [calStep, setCalStep] = useState(null); // null | "tee" | "green"
 
-  // Last rapportar og aktiv runde frå localStorage
+
+  // Last rapportar, aktiv runde og kalibrerte posisjonar frå localStorage
   useEffect(() => {
     try { const r = localStorage.getItem("golf-reports"); if (r) setSavedReports(JSON.parse(r)); } catch(e){}
+    try { const t = localStorage.getItem("golf-tee-pos"); if (t) setTeePositions(JSON.parse(t)); } catch(e){}
+    try { const g = localStorage.getItem("golf-green-pos"); if (g) setGreenPositions(JSON.parse(g)); } catch(e){}
     try {
       const r = localStorage.getItem("golf-active-round");
       if (r) {
@@ -425,8 +452,8 @@ function GolfShotTracker() {
         setCurrentShots(d.currentShots||[]); setTee(d.tee||"yellow");
         if (d.currentShots?.length > 0) {
           const ls = d.currentShots[d.currentShots.length-1];
-          setLastPos(ls.pos || TEE_POSITIONS[(d.currentHole||1)-1]);
-        } else { setLastPos(TEE_POSITIONS[(d.currentHole||1)-1]); }
+          setLastPos(ls.pos || teePositions[(d.currentHole||1)-1]);
+        } else { setLastPos(teePositions[(d.currentHole||1)-1]); }
         setMessage("♻️ Pågåande runde henta opp att");
       }
     } catch(e){}
@@ -442,7 +469,7 @@ function GolfShotTracker() {
   }, [holes, currentHole, currentShots, tee]);
 
   const holeInfo = COURSE_DATA[currentHole - 1];
-  const greenPos = GREEN_POSITIONS[currentHole - 1];
+  const greenPos = greenPositions[currentHole - 1];
   const totalScore = holes.reduce((s,h) => s + h.shots.length, 0);
   const totalPar = holes.reduce((s,h) => s + COURSE_DATA[h.hole-1].par, 0);
   const scoreDiff = totalScore - totalPar;
@@ -482,7 +509,7 @@ function GolfShotTracker() {
       setCurrentHole(h => h + 1);
       setStep("club"); setSelectedClub(null); setInHole(false);
       const nextHole = currentHole + 1;
-      setLastPos(nextHole <= 18 ? TEE_POSITIONS[nextHole-1] : null);
+      setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
       setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}${distance ? ` (siste: ${distance}m)` : ""}`);
     } else {
       setCurrentShots(updatedShots);
@@ -495,12 +522,35 @@ function GolfShotTracker() {
     }
   }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo]);
 
+  const handleCalibrateTap = useCallback((pos) => {
+    if (!calStep) return;
+    if (calStep === "tee") {
+      const updated = [...teePositions];
+      updated[calHole - 1] = pos;
+      setTeePositions(updated);
+      try { localStorage.setItem("golf-tee-pos", JSON.stringify(updated)); } catch(e){}
+      setCalStep("green");
+    } else if (calStep === "green") {
+      const updated = [...greenPositions];
+      updated[calHole - 1] = pos;
+      setGreenPositions(updated);
+      try { localStorage.setItem("golf-green-pos", JSON.stringify(updated)); } catch(e){}
+      setCalStep(null);
+    }
+  }, [calStep, calHole, teePositions, greenPositions]);
+
+  const resetCalibration = () => {
+    setTeePositions([...DEFAULT_TEE_POSITIONS]);
+    setGreenPositions([...DEFAULT_GREEN_POSITIONS]);
+    try { localStorage.removeItem("golf-tee-pos"); localStorage.removeItem("golf-green-pos"); } catch(e){}
+  };
+
   const undoLast = () => {
     if (currentShots.length === 0) return;
     const removed = currentShots[currentShots.length-1];
     const newShots = currentShots.slice(0,-1);
     setCurrentShots(newShots);
-    setLastPos(newShots.length > 0 ? newShots[newShots.length-1].pos : TEE_POSITIONS[currentHole-1]);
+    setLastPos(newShots.length > 0 ? newShots[newShots.length-1].pos : teePositions[currentHole-1]);
     setStep("club"); setSelectedClub(null);
     setMessage(`↩ Fjerna slag ${removed.shotNumber} (${removed.club})`);
   };
@@ -511,7 +561,7 @@ function GolfShotTracker() {
     if (reportHoles.length === 0) return;
     const rScore = reportHoles.reduce((s,h)=>s+h.shots.length,0);
     const rPar = reportHoles.reduce((s,h)=>s+COURSE_DATA[h.hole-1].par,0);
-    const html = buildReportHTML(reportHoles, tee);
+    const html = buildReportHTML(reportHoles, tee, teePositions, greenPositions);
     const date = new Date().toISOString().slice(0,10);
     const time = new Date().toLocaleTimeString("nb-NO",{hour:"2-digit",minute:"2-digit"});
     const filename = `Sunnfjord_GK_${date}_${rScore}slag.html`;
@@ -520,7 +570,7 @@ function GolfShotTracker() {
     setSavedReports(updated);
     try { localStorage.setItem("golf-reports", JSON.stringify(updated)); localStorage.removeItem("golf-active-round"); } catch(e){}
     setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
-    setStep("club"); setLastPos(TEE_POSITIONS[0]); setInHole(false); setConfirmFinish(false);
+    setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false);
     setMessage(`📄 Rapport lagra: ${filename}`); setView("reports");
   };
 
@@ -538,7 +588,7 @@ function GolfShotTracker() {
               </p>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              {[{key:"play",icon:"🏌️"},{key:"scorecard",icon:"📋"},{key:"stats",icon:"📊"},{key:"reports",icon:"📄"}].map(tab => (
+              {[{key:"play",icon:"🏌️"},{key:"scorecard",icon:"📋"},{key:"stats",icon:"📊"},{key:"reports",icon:"📄"},{key:"calibrate",icon:"⚙️"}].map(tab => (
                 <button key={tab.key} onClick={()=>setView(tab.key)} style={{
                   width: 38, height: 38, borderRadius: 8, border: "none",
                   background: view===tab.key?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",
@@ -586,7 +636,7 @@ function GolfShotTracker() {
 
             {/* Kart — alltid synleg */}
             <div style={{ marginBottom: 10 }}>
-              <GolfMap currentHole={currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} />
+              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} />
               {step === "map" && (
                 <div style={{ textAlign: "center", marginTop: 6, fontSize: 14, fontWeight: 700, color: "#1a3a25" }}>
                   👆 Trykk på kartet der ballen landa
@@ -691,6 +741,54 @@ function GolfShotTracker() {
           </div>
         )}
 
+
+        {/* CALIBRATE VIEW */}
+        {view==="calibrate"&&(
+          <div>
+            <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Kalibrer bane</div>
+            <div style={{fontSize:13,color:"#666",marginBottom:10,lineHeight:1.5}}>Vel hol, trykk «Plasser tee» og trykk på kartet. Deretter «Plasser green» og trykk på kartet.</div>
+
+            <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+              {Array.from({length:18},(_,i)=>i+1).map(n=>(
+                <button key={n} onClick={()=>{setCalHole(n);setCalStep(null);}} style={{
+                  width:36,height:36,borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:13,
+                  background:calHole===n?"#1a3a25":"#fff",color:calHole===n?"#fff":"#1a3a25",
+                  border:"2px solid #1a3a25",
+                }}>{n}</button>
+              ))}
+            </div>
+
+            <div style={{marginBottom:10}}>
+              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} />
+            </div>
+
+            <div style={{display:"flex",gap:6,marginBottom:10}}>
+              <button onClick={()=>setCalStep("tee")} style={{
+                flex:1,padding:"14px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:14,
+                background:calStep==="tee"?"#e8f5e9":"#fff",
+                border:calStep==="tee"?"3px solid #1a3a25":"2px solid #1a3a25",
+                color:"#1a3a25",
+              }}>📍 Plasser tee</button>
+              <button onClick={()=>setCalStep("green")} style={{
+                flex:1,padding:"14px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:14,
+                background:calStep==="green"?"#fff3cd":"#fff",
+                border:calStep==="green"?"3px solid #e6a800":"2px solid #1a3a25",
+                color:"#1a3a25",
+              }}>⛳ Plasser green</button>
+            </div>
+
+            {calStep&&<div style={{textAlign:"center",fontSize:14,fontWeight:700,color:calStep==="tee"?"#1a3a25":"#8a6500",marginBottom:10}}>👆 Trykk på kartet for å plassere {calStep==="tee"?"tee-boks":"green"} for hol {calHole}</div>}
+
+            <div style={{background:"#fff",borderRadius:10,border:"1px solid #ddd",padding:"12px 14px",marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#1a3a25",marginBottom:4}}>Hol {calHole}</div>
+              <div style={{fontSize:12,color:"#666"}}>Tee: {teePositions[calHole-1]?`${teePositions[calHole-1].lat.toFixed(5)}, ${teePositions[calHole-1].lon.toFixed(5)}`:"Ikkje sett"}</div>
+              <div style={{fontSize:12,color:"#666"}}>Green: {greenPositions[calHole-1]?`${greenPositions[calHole-1].lat.toFixed(5)}, ${greenPositions[calHole-1].lon.toFixed(5)}`:"Ikkje sett"}</div>
+              {teePositions[calHole-1]&&greenPositions[calHole-1]&&<div style={{fontSize:12,color:"#2d8a4e",fontWeight:700,marginTop:2}}>Avstand: {Math.round(haversineDistance(teePositions[calHole-1].lat,teePositions[calHole-1].lon,greenPositions[calHole-1].lat,greenPositions[calHole-1].lon))}m</div>}
+            </div>
+
+            <button onClick={resetCalibration} style={{width:"100%",padding:"12px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:13,fontWeight:600,cursor:"pointer"}}>Nullstill alle posisjonar til standard</button>
+          </div>
+        )}
         {/* Rapportar */}
         {view==="reports"&&(
           <div>

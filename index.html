@@ -181,14 +181,15 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       markersRef.current.push(m);
     }
 
-    // Green/flagg-markør
+    // Green/flagg-markør (interactive: false slik at klikk går gjennom til kartet)
     if (greenPos) {
       const m = L.marker([greenPos.lat, greenPos.lon], {
         icon: L.divIcon({
-          html: '<div style="font-size:24px;text-align:center;margin-top:-12px;margin-left:-6px">⛳</div>',
+          html: '<div style="font-size:24px;text-align:center;margin-top:-12px;margin-left:-6px;pointer-events:none">⛳</div>',
           iconSize: [24, 24], className: '',
         }),
-      }).addTo(map).bindTooltip(`Hol ${currentHole}`, { permanent: false });
+        interactive: false,
+      }).addTo(map);
       markersRef.current.push(m);
     }
 
@@ -524,22 +525,24 @@ function GolfShotTracker() {
     }
   }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo]);
 
+  // Green-par: hol 1&10, 2&11, ... 9&18 deler same green
+  const GREEN_PAIRS = [[0,9],[1,10],[2,11],[3,12],[4,13],[5,14],[6,15],[7,16],[8,17]];
+
   const handleCalibrateTap = useCallback((pos) => {
-    if (!calStep) return;
-    if (calStep === "tee") {
-      const updated = [...teePositions];
+    if (calStep !== "green") return;
+    const updated = [...greenPositions];
+    // Finn paret og oppdater begge hol
+    const pair = GREEN_PAIRS.find(([a,b]) => a === calHole - 1 || b === calHole - 1);
+    if (pair) {
+      updated[pair[0]] = pos;
+      updated[pair[1]] = pos;
+    } else {
       updated[calHole - 1] = pos;
-      setTeePositions(updated);
-      try { localStorage.setItem("golf-tee-pos", JSON.stringify(updated)); } catch(e){}
-      setCalStep("green");
-    } else if (calStep === "green") {
-      const updated = [...greenPositions];
-      updated[calHole - 1] = pos;
-      setGreenPositions(updated);
-      try { localStorage.setItem("golf-green-pos", JSON.stringify(updated)); } catch(e){}
-      setCalStep(null);
     }
-  }, [calStep, calHole, teePositions, greenPositions]);
+    setGreenPositions(updated);
+    try { localStorage.setItem("golf-green-pos", JSON.stringify(updated)); } catch(e){}
+    setCalStep(null);
+  }, [calStep, calHole, greenPositions]);
 
   const resetCalibration = () => {
     setTeePositions([...DEFAULT_TEE_POSITIONS]);
@@ -768,51 +771,55 @@ function GolfShotTracker() {
         )}
 
 
-        {/* CALIBRATE VIEW */}
+        {/* CALIBRATE VIEW — 9 greener (delte mellom hol 1-9 og 10-18) */}
         {view==="calibrate"&&(
           <div>
-            <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Kalibrer bane</div>
-            <div style={{fontSize:13,color:"#666",marginBottom:10,lineHeight:1.5}}>Vel hol, trykk «Plasser tee» og trykk på kartet. Deretter «Plasser green» og trykk på kartet.</div>
+            <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Kalibrer green-posisjonar</div>
+            <div style={{fontSize:13,color:"#666",marginBottom:10,lineHeight:1.5}}>9-hols bane med 18 utslag. Vel green, trykk «Plasser green» og trykk på kartet. Tee-posisjonane er GPS-oppmålte og faste.</div>
 
-            <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
-              {Array.from({length:18},(_,i)=>i+1).map(n=>(
-                <button key={n} onClick={()=>{setCalHole(n);setCalStep(null);}} style={{
-                  width:36,height:36,borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:13,
-                  background:calHole===n?"#1a3a25":"#fff",color:calHole===n?"#fff":"#1a3a25",
-                  border:"2px solid #1a3a25",
-                }}>{n}</button>
-              ))}
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
+              {GREEN_PAIRS.map(([a,b])=>{
+                const greenIdx = a;
+                const isActive = calHole === a+1;
+                const g = greenPositions[greenIdx];
+                const tA = teePositions[a];
+                const tB = teePositions[b];
+                const distA = tA && g ? Math.round(haversineDistance(tA.lat,tA.lon,g.lat,g.lon)) : "–";
+                const distB = tB && g ? Math.round(haversineDistance(tB.lat,tB.lon,g.lat,g.lon)) : "–";
+                return (
+                  <button key={a} onClick={()=>{setCalHole(a+1);setCalStep(null);}} style={{
+                    padding:"10px 14px",borderRadius:8,cursor:"pointer",textAlign:"left",
+                    background:isActive?"#e8f5e9":"#fff",
+                    border:isActive?"2px solid #1a3a25":"1px solid #ddd",
+                    display:"flex",alignItems:"center",gap:10,
+                  }}>
+                    <span style={{width:36,height:36,borderRadius:"50%",background:isActive?"#1a3a25":"#eee",color:isActive?"#fff":"#1a3a25",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:14,flexShrink:0}}>⛳</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:14,fontWeight:700,color:"#1a3a25"}}>Hol {a+1} / {b+1}</div>
+                      <div style={{fontSize:11,color:"#666"}}>Par {COURSE_DATA[a].par} · {distA}m / {distB}m</div>
+                    </div>
+                    {g && <div style={{fontSize:10,color:"#999",textAlign:"right"}}>{g.lat.toFixed(4)}<br/>{g.lon.toFixed(4)}</div>}
+                  </button>
+                );
+              })}
             </div>
 
             <div style={{marginBottom:10}}>
               <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} />
             </div>
 
-            <div style={{display:"flex",gap:6,marginBottom:10}}>
-              <button onClick={()=>setCalStep("tee")} style={{
-                flex:1,padding:"14px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:14,
-                background:calStep==="tee"?"#e8f5e9":"#fff",
-                border:calStep==="tee"?"3px solid #1a3a25":"2px solid #1a3a25",
-                color:"#1a3a25",
-              }}>📍 Plasser tee</button>
-              <button onClick={()=>setCalStep("green")} style={{
-                flex:1,padding:"14px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:14,
+            {(()=>{
+              const pair = GREEN_PAIRS.find(([a,b]) => a === calHole-1 || b === calHole-1);
+              const pairLabel = pair ? `${pair[0]+1}/${pair[1]+1}` : calHole;
+              return <button onClick={()=>setCalStep("green")} style={{
+                width:"100%",padding:"16px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:15,
                 background:calStep==="green"?"#fff3cd":"#fff",
                 border:calStep==="green"?"3px solid #e6a800":"2px solid #1a3a25",
-                color:"#1a3a25",
-              }}>⛳ Plasser green</button>
-            </div>
+                color:calStep==="green"?"#8a6500":"#1a3a25",marginBottom:10,
+              }}>{calStep==="green"?`👆 Trykk på kartet for å plassere green ${pairLabel}`:`⛳ Plasser green for hol ${pairLabel}`}</button>;
+            })()}
 
-            {calStep&&<div style={{textAlign:"center",fontSize:14,fontWeight:700,color:calStep==="tee"?"#1a3a25":"#8a6500",marginBottom:10}}>👆 Trykk på kartet for å plassere {calStep==="tee"?"tee-boks":"green"} for hol {calHole}</div>}
-
-            <div style={{background:"#fff",borderRadius:10,border:"1px solid #ddd",padding:"12px 14px",marginBottom:10}}>
-              <div style={{fontSize:13,fontWeight:700,color:"#1a3a25",marginBottom:4}}>Hol {calHole}</div>
-              <div style={{fontSize:12,color:"#666"}}>Tee: {teePositions[calHole-1]?`${teePositions[calHole-1].lat.toFixed(5)}, ${teePositions[calHole-1].lon.toFixed(5)}`:"Ikkje sett"}</div>
-              <div style={{fontSize:12,color:"#666"}}>Green: {greenPositions[calHole-1]?`${greenPositions[calHole-1].lat.toFixed(5)}, ${greenPositions[calHole-1].lon.toFixed(5)}`:"Ikkje sett"}</div>
-              {teePositions[calHole-1]&&greenPositions[calHole-1]&&<div style={{fontSize:12,color:"#2d8a4e",fontWeight:700,marginTop:2}}>Avstand: {Math.round(haversineDistance(teePositions[calHole-1].lat,teePositions[calHole-1].lon,greenPositions[calHole-1].lat,greenPositions[calHole-1].lon))}m</div>}
-            </div>
-
-            <button onClick={resetCalibration} style={{width:"100%",padding:"12px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:13,fontWeight:600,cursor:"pointer"}}>Nullstill alle posisjonar til standard</button>
+            <button onClick={resetCalibration} style={{width:"100%",padding:"12px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:13,fontWeight:600,cursor:"pointer"}}>Nullstill alle green-posisjonar til standard</button>
           </div>
         )}
         {/* Rapportar */}

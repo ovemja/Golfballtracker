@@ -255,7 +255,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
     const map = mapInstanceRef.current;
     if (!map || !teePos) return;
     map.setView([teePos.lat, teePos.lon], 17, { animate: true });
-  }, [currentHole]);
+  }, [currentHole, teePos]);
 
   return <div ref={mapRef} style={{ width: "100%", height: 350, borderRadius: 12, border: "2px solid #1a3a25" }} />;
 }
@@ -322,7 +322,7 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions) {
     teePositions.forEach((t,i)=>{sv+=`<circle cx="${toX(t.lon)}" cy="${toY(t.lat)}" r="4" fill="#ccc"/><text x="${toX(t.lon)}" y="${toY(t.lat)-7}" text-anchor="middle" font-size="8" fill="#999" font-family="monospace">${i+1}</text>`;});
     greenPositions.forEach((g,i)=>{sv+=`<circle cx="${toX(g.lon)}" cy="${toY(g.lat)}" r="3" fill="#2d8a4e" opacity="0.4"/>`;});
     reportHoles.forEach(h=>{
-      const tp=teePositions[h.hole-1], gp=GREEN_POSITIONS[h.hole-1];
+      const tp=teePositions[h.hole-1], gp=greenPositions[h.hole-1];
       const pts=h.shots.filter(s=>s.pos); const c=MAP_COLORS[(h.hole-1)%MAP_COLORS.length];
       if(tp&&pts.length>0) sv+=`<line x1="${toX(tp.lon)}" y1="${toY(tp.lat)}" x2="${toX(pts[0].pos.lon)}" y2="${toY(pts[0].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
       for(let i=0;i<pts.length-1;i++) sv+=`<line x1="${toX(pts[i].pos.lon)}" y1="${toY(pts[i].pos.lat)}" x2="${toX(pts[i+1].pos.lon)}" y2="${toY(pts[i+1].pos.lat)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`;
@@ -506,11 +506,13 @@ function GolfShotTracker() {
       const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;
       setHoles(prev => [...prev, { hole: currentHole, shots: updatedShots }]);
       setCurrentShots([]);
-      setCurrentHole(h => h + 1);
-      setStep("club"); setSelectedClub(null); setInHole(false);
       const nextHole = currentHole + 1;
+      setCurrentHole(nextHole);
+      setStep("club"); setSelectedClub(null); setInHole(false);
       setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
       setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}${distance ? ` (siste: ${distance}m)` : ""}`);
+      // Scroll til toppen slik at kartet er synleg
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
       setCurrentShots(updatedShots);
       setLastPos(pos);

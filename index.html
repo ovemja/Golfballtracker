@@ -667,15 +667,39 @@ function GolfShotTracker() {
                   Slag {currentShots.length+1} — Vel kølle
                 </div>
 
-                {/* Ballen er i holet toggle */}
-                <button onClick={()=>setInHole(v=>!v)} style={{
-                  width: "100%", padding: "14px 16px", marginBottom: 8,
-                  background: inHole?"#fff3cd":"#fff", border: inHole?"3px solid #e6a800":"2px solid #ccc",
+                {/* Ballen er i holet — avsluttar holet direkte */}
+                {currentShots.length > 0 && <button onClick={()=>{
+                  // Bruk green-posisjon som siste ballplassering
+                  const pos = greenPos || lastPos;
+                  if (!pos) return;
+                  let distance = null;
+                  if (lastPos && pos) {
+                    distance = Math.round(haversineDistance(lastPos.lat, lastPos.lon, pos.lat, pos.lon));
+                    if (distance < 1) distance = null;
+                  }
+                  // Legg til siste slag (putt i holet) med valt kølle eller "Putter"
+                  const club = "Putter";
+                  const shot = { club, pos, distance, toHole: 0, shotNumber: currentShots.length + 1 };
+                  const updatedShots = [...currentShots, shot];
+                  const score = updatedShots.length;
+                  const diff = score - holeInfo.par;
+                  const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;
+                  setHoles(prev => [...prev, { hole: currentHole, shots: updatedShots }]);
+                  setCurrentShots([]);
+                  const nextHole = currentHole + 1;
+                  setCurrentHole(nextHole);
+                  setStep("club"); setSelectedClub(null); setInHole(false);
+                  setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
+                  setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}`);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }} style={{
+                  width: "100%", padding: "16px 16px", marginBottom: 8,
+                  background: "#fff3cd", border: "3px solid #e6a800",
                   borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
                 }}>
-                  <span style={{ width: 30, height: 30, borderRadius: "50%", background: inHole?"#e6a800":"#eee", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{inHole?"⛳":"○"}</span>
-                  <span style={{ fontSize: 16, color: inHole?"#8a6500":"#888", fontWeight: 700 }}>Ballen er i holet</span>
-                </button>
+                  <span style={{ width: 30, height: 30, borderRadius: "50%", background: "#e6a800", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⛳</span>
+                  <span style={{ fontSize: 16, color: "#8a6500", fontWeight: 700 }}>Ballen er i holet — avslutt</span>
+                </button>}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                   {CLUBS.map(club => (

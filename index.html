@@ -121,14 +121,40 @@ function scoreLabel(score, par) {
     diff === 2 ? "Dbl-bogey" : `+${diff}`;
 }
 
+// ─── Google Sheets integrasjon ───
+// Sett inn URL-en frå Google Apps Script her:
+const SHEETS_URL = localStorage.getItem("golf-sheets-url") || "https://script.google.com/macros/s/AKfycbyemoX3aH6vuz_1ZqbC4HyjBd3zmICQnWmb1OZQV-O3Kd5wnsT2CjIhrReMmqaBVu-F/exec";
+
+async function sendToSheets(roundData) {
+  const url = SHEETS_URL || localStorage.getItem("golf-sheets-url");
+  if (!url) return { ok: false, error: "Ingen Google Sheets URL konfigurert" };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(roundData),
+    });
+    // no-cors gir opaque response — vi antek suksess
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 // ─── Leaflet Map Component ───
 function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
+  const clickHandlerRef = useRef(null);
 
   const greenPos = greenPositions[currentHole - 1];
   const teePos = teePositions[currentHole - 1];
+
+  // Hald click-handler oppdatert via ref (ingen window-forureining)
+  clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
 
   useEffect(() => {
     if (mapInstanceRef.current) return;
@@ -148,21 +174,13 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
 
     map.on('click', (e) => {
       const pos = { lat: e.latlng.lat, lon: e.latlng.lng };
-      if (window._golfOnCalibrateTap) window._golfOnCalibrateTap(pos);
-      else if (window._golfOnPlaceBall) window._golfOnPlaceBall(pos);
+      clickHandlerRef.current?.(pos);
     });
 
     mapInstanceRef.current = map;
 
     return () => { map.remove(); mapInstanceRef.current = null; };
   }, []);
-
-  // Oppdater callback refs
-  useEffect(() => {
-    window._golfOnPlaceBall = calibrateMode ? null : onPlaceBall;
-    window._golfOnCalibrateTap = calibrateMode ? onCalibrateTap : null;
-    return () => { window._golfOnPlaceBall = null; window._golfOnCalibrateTap = null; };
-  }, [onPlaceBall, calibrateMode, onCalibrateTap]);
 
   // Oppdater markørar og linjer
   useEffect(() => {
@@ -560,7 +578,9 @@ function GolfShotTracker() {
     setMessage(`↩ Fjerna slag ${removed.shotNumber} (${removed.club})`);
   };
 
-  const finishRound = () => {
+  const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error" | "no-url"
+
+  const finishRound = async () => {
     let reportHoles = [...holes];
     if (currentShots.length > 0) reportHoles.push({ hole: currentHole, shots: currentShots, unfinished: true });
     if (reportHoles.length === 0) return;
@@ -574,6 +594,49 @@ function GolfShotTracker() {
     const updated = [newReport, ...savedReports];
     setSavedReports(updated);
     try { localStorage.setItem("golf-reports", JSON.stringify(updated)); localStorage.removeItem("golf-active-round"); } catch(e){}
+
+    // Send til Google Sheets
+    const sheetsUrl = localStorage.getItem("golf-sheets-url");
+    if (sheetsUrl) {
+      setSheetsStatus("sending");
+      const roundData = {
+        date, time, tee,
+        holesPlayed: reportHoles.length,
+        score: rScore, par: rPar, diff: rScore - rPar,
+        holes: reportHoles.map(h => ({
+          hole: h.hole,
+          par: COURSE_DATA[h.hole-1].par,
+          shots: h.shots.length,
+          diff: h.shots.length - COURSE_DATA[h.hole-1].par,
+          unfinished: h.unfinished || false,
+          details: h.shots.map(s => ({
+            num: s.shotNumber, club: s.club,
+            distance: s.distance || null,
+            toHole: s.toHole || null,
+          })),
+        })),
+        clubStats: (() => {
+          const cs = {};
+          reportHoles.flatMap(h=>h.shots).forEach(s => {
+            if (!cs[s.club]) cs[s.club] = { count: 0, dists: [] };
+            cs[s.club].count++;
+            if (s.distance) cs[s.club].dists.push(s.distance);
+          });
+          return Object.entries(cs).map(([club, st]) => ({
+            club, count: st.count,
+            avg: st.dists.length ? Math.round(st.dists.reduce((a,b)=>a+b,0)/st.dists.length) : null,
+            max: st.dists.length ? Math.max(...st.dists) : null,
+          }));
+        })(),
+      };
+      const result = await sendToSheets(roundData);
+      setSheetsStatus(result.ok ? "ok" : "error");
+      setTimeout(() => setSheetsStatus(null), 5000);
+    } else {
+      setSheetsStatus("no-url");
+      setTimeout(() => setSheetsStatus(null), 5000);
+    }
+
     setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
     setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false);
     setMessage(`📄 Rapport lagra: ${filename}`); setView("reports");
@@ -819,13 +882,48 @@ function GolfShotTracker() {
               }}>{calStep==="green"?`👆 Trykk på kartet for å plassere green ${pairLabel}`:`⛳ Plasser green for hol ${pairLabel}`}</button>;
             })()}
 
-            <button onClick={resetCalibration} style={{width:"100%",padding:"12px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:13,fontWeight:600,cursor:"pointer"}}>Nullstill alle green-posisjonar til standard</button>
+            <button onClick={resetCalibration} style={{width:"100%",padding:"12px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:20}}>Nullstill alle green-posisjonar til standard</button>
+
+            {/* Google Sheets oppsett */}
+            <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:10,marginTop:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Google Sheets</div>
+            <div style={{fontSize:13,color:"#666",marginBottom:10,lineHeight:1.5}}>Lim inn URL-en frå Google Apps Script for å lagre rundedata automatisk.</div>
+            <input
+              type="text"
+              placeholder="https://script.google.com/macros/s/.../exec"
+              defaultValue={localStorage.getItem("golf-sheets-url") || ""}
+              onBlur={(e) => {
+                const url = e.target.value.trim();
+                if (url) { localStorage.setItem("golf-sheets-url", url); }
+                else { localStorage.removeItem("golf-sheets-url"); }
+              }}
+              style={{
+                width:"100%",padding:"12px",fontSize:13,fontFamily:"monospace",
+                border:"2px solid #1a3a25",borderRadius:8,marginBottom:6,
+                background:"#fff",color:"#1a1a1a",
+              }}
+            />
+            <div style={{fontSize:11,color:"#999",marginBottom:10}}>
+              {localStorage.getItem("golf-sheets-url") ? "✅ URL lagra — rundedata vert sendt automatisk" : "Ingen URL sett — data vert berre lagra lokalt"}
+            </div>
           </div>
         )}
         {/* Rapportar */}
         {view==="reports"&&(
           <div>
             <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:14,textTransform:"uppercase",letterSpacing:"0.08em"}}>Lagra rapportar</div>
+            {sheetsStatus && (
+              <div style={{
+                padding:"10px 14px",marginBottom:10,borderRadius:8,fontSize:13,fontWeight:600,
+                background: sheetsStatus==="ok"?"#e8f5e9":sheetsStatus==="sending"?"#fff8e1":sheetsStatus==="no-url"?"#fff8e1":"#ffebee",
+                border: `2px solid ${sheetsStatus==="ok"?"#4a8c5c":sheetsStatus==="sending"?"#e6a800":sheetsStatus==="no-url"?"#e6a800":"#cc4444"}`,
+                color: sheetsStatus==="ok"?"#1a3a25":sheetsStatus==="error"?"#cc4444":"#8a6500",
+              }}>
+                {sheetsStatus==="sending"&&"📤 Sender til Google Sheets..."}
+                {sheetsStatus==="ok"&&"✅ Rundedata sendt til Google Sheets"}
+                {sheetsStatus==="error"&&"❌ Klarte ikkje sende til Google Sheets"}
+                {sheetsStatus==="no-url"&&"⚠️ Google Sheets ikkje konfigurert — gå til ⚙️ for å setje opp"}
+              </div>
+            )}
             {savedReports.length===0?<div style={{textAlign:"center",color:"#999",padding:30,fontSize:14}}>Ingen rapportar enno</div>
             :savedReports.map((r,i)=><ReportItem key={`${r.date}-${r.time}-${i}`} report={r} index={i} savedReports={savedReports} setSavedReports={setSavedReports}/>)}
           </div>

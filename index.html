@@ -22,26 +22,26 @@
 <script type="text/babel">
 const { useState, useRef, useEffect, useCallback } = React;
 
-// ─── Banedata Sunnfjord Golfklubb ───
+// ─── Banedata Sunnfjord Golfklubb (oppdatert 2025) ───
 const COURSE_DATA = [
   { hole: 1,  par: 4, index: 17, yellowM: 222, redM: 172 },
   { hole: 2,  par: 5, index: 5,  yellowM: 382, redM: 355 },
   { hole: 3,  par: 3, index: 15, yellowM: 127, redM: 106 },
   { hole: 4,  par: 5, index: 3,  yellowM: 372, redM: 320 },
-  { hole: 5,  par: 4, index: 9,  yellowM: 222, redM: 189 },
+  { hole: 5,  par: 4, index: 9,  yellowM: 248, redM: 210 },
   { hole: 6,  par: 4, index: 1,  yellowM: 312, redM: 268 },
   { hole: 7,  par: 3, index: 11, yellowM: 103, redM: 80 },
   { hole: 8,  par: 4, index: 13, yellowM: 218, redM: 167 },
-  { hole: 9,  par: 4, index: 7,  yellowM: 266, redM: 177 },
+  { hole: 9,  par: 4, index: 7,  yellowM: 266, redM: 212 },
   { hole: 10, par: 4, index: 18, yellowM: 204, redM: 195 },
   { hole: 11, par: 4, index: 2,  yellowM: 274, redM: 260 },
   { hole: 12, par: 3, index: 14, yellowM: 147, redM: 127 },
   { hole: 13, par: 5, index: 4,  yellowM: 352, redM: 281 },
-  { hole: 14, par: 4, index: 12, yellowM: 230, redM: 194 },
+  { hole: 14, par: 4, index: 12, yellowM: 245, redM: 243 },
   { hole: 15, par: 5, index: 6,  yellowM: 360, redM: 305 },
   { hole: 16, par: 3, index: 10, yellowM: 117, redM: 116 },
   { hole: 17, par: 4, index: 16, yellowM: 227, redM: 192 },
-  { hole: 18, par: 4, index: 8,  yellowM: 273, redM: 212 },
+  { hole: 18, par: 4, index: 8,  yellowM: 273, redM: 266 },
 ];
 const TOTAL_PAR = COURSE_DATA.reduce((s, h) => s + h.par, 0);
 
@@ -579,6 +579,7 @@ function GolfShotTracker() {
   };
 
   const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error" | "no-url"
+  const [showPickup, setShowPickup] = useState(false);
 
   const finishRound = async () => {
     let reportHoles = [...holes];
@@ -716,11 +717,11 @@ function GolfShotTracker() {
             {currentShots.length > 0 && (
               <div style={{ marginBottom: 10 }}>
                 {currentShots.map((s, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", marginBottom: 4, background: "#fff", border: "1px solid #ccc", borderRadius: 8, fontSize: 15 }}>
-                    <span style={{ width: 28, height: 28, borderRadius: "50%", background: "#1a3a25", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, flexShrink: 0 }}>{s.shotNumber}</span>
-                    <span style={{ flex: 1, fontWeight: 600 }}>{s.club}</span>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", marginBottom: 4, background: s.penalty ? "#fff8e6" : s.pickup ? "#ffebee" : "#fff", border: `1px solid ${s.penalty ? "#e6a800" : s.pickup ? "#cc4444" : "#ccc"}`, borderRadius: 8, fontSize: 15 }}>
+                    <span style={{ width: 28, height: 28, borderRadius: "50%", background: s.penalty ? "#cc6600" : s.pickup ? "#cc4444" : "#1a3a25", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, flexShrink: 0 }}>{s.penalty ? "⚠️" : s.shotNumber}</span>
+                    <span style={{ flex: 1, fontWeight: 600, color: s.penalty ? "#cc6600" : s.pickup ? "#cc4444" : "#1a1a1a" }}>{s.club}</span>
                     {s.distance && <span style={{ color: "#1a3a25", fontFamily: "monospace", fontWeight: 700 }}>{s.distance}m</span>}
-                    {s.toHole != null && <span style={{ color: "#2d8a4e", fontSize: 12, fontWeight: 600 }}>⛳{s.toHole}m</span>}
+                    {s.toHole != null && !s.penalty && !s.pickup && <span style={{ color: "#2d8a4e", fontSize: 12, fontWeight: 600 }}>⛳{s.toHole}m</span>}
                   </div>
                 ))}
               </div>
@@ -766,6 +767,80 @@ function GolfShotTracker() {
                   <span style={{ width: 30, height: 30, borderRadius: "50%", background: "#e6a800", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⛳</span>
                   <span style={{ fontSize: 16, color: "#8a6500", fontWeight: 700 }}>Ballen er i holet — avslutt</span>
                 </button>}
+
+                {/* Straffeslag og pickup */}
+                {currentShots.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    <button onClick={()=>{
+                      const lastShot = currentShots[currentShots.length - 1];
+                      const pos = lastShot?.pos || lastPos;
+                      const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true };
+                      setCurrentShots(prev => [...prev, shot]);
+                      setMessage(`⚠️ Straffeslag lagt til — no ${currentShots.length + 1} slag`);
+                    }} style={{
+                      flex: 1, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
+                      background: "#fff", border: "2px solid #cc6600",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    }}>
+                      <span style={{ fontSize: 16 }}>⚠️</span>
+                      <span style={{ fontSize: 13, color: "#cc6600", fontWeight: 700 }}>Straff +1</span>
+                    </button>
+                    <button onClick={()=>setShowPickup(v=>!v)} style={{
+                      flex: 1, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
+                      background: showPickup ? "#ffebee" : "#fff", border: "2px solid #cc4444",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    }}>
+                      <span style={{ fontSize: 16 }}>🏳️</span>
+                      <span style={{ fontSize: 13, color: "#cc4444", fontWeight: 700 }}>Pickup</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Pickup-val */}
+                {showPickup && (
+                  <div style={{ background: "#fff", border: "2px solid #cc4444", borderRadius: 10, padding: "14px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#cc4444", marginBottom: 8, textAlign: "center" }}>Vel score for holet</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+                      {(() => {
+                        const par = holeInfo.par;
+                        const minScore = Math.max(currentShots.length + 1, par + 1);
+                        const options = [];
+                        for (let s = minScore; s <= par * 2 + 2; s++) {
+                          const diff = s - par;
+                          const label = diff === 1 ? "Bogey" : diff === 2 ? "Dbl-bogey" : `+${diff}`;
+                          options.push({ score: s, label });
+                        }
+                        return options.map(opt => (
+                          <button key={opt.score} onClick={()=>{
+                            // Fyll opp med "Pickup"-slag til vi når valt score
+                            const pos = lastPos;
+                            let shots = [...currentShots];
+                            while (shots.length < opt.score) {
+                              shots.push({ club: "Pickup", pos, distance: null, toHole: null, shotNumber: shots.length + 1, pickup: true });
+                            }
+                            setHoles(prev => [...prev, { hole: currentHole, shots, pickup: true }]);
+                            setCurrentShots([]);
+                            const nextHole = currentHole + 1;
+                            setCurrentHole(nextHole);
+                            setStep("club"); setSelectedClub(null); setInHole(false); setShowPickup(false);
+                            setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
+                            setMessage(`🏳️ Hol ${currentHole} pickup — ${opt.score} slag (${opt.label})`);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }} style={{
+                            padding: "10px 16px", borderRadius: 8, cursor: "pointer",
+                            background: opt.score === par * 2 ? "#ffebee" : "#fff",
+                            border: opt.score === par * 2 ? "2px solid #cc4444" : "1px solid #ccc",
+                            fontSize: 14, fontWeight: 700, color: "#1a1a1a",
+                          }}>
+                            <div>{opt.score}</div>
+                            <div style={{ fontSize: 10, color: "#999", fontWeight: 600 }}>{opt.label}</div>
+                          </button>
+                        ));
+                      })()}
+                    </div>
+                    <button onClick={()=>setShowPickup(false)} style={{ width: "100%", marginTop: 8, padding: "10px", background: "#fff", border: "1px solid #ccc", borderRadius: 8, color: "#666", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
+                  </div>
+                )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                   {CLUBS.map(club => (

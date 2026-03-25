@@ -123,20 +123,17 @@ function scoreLabel(score, par) {
 
 // ─── Google Sheets integrasjon ───
 // Sett inn URL-en frå Google Apps Script her:
-const SHEETS_URL = localStorage.getItem("golf-sheets-url") || "https://script.google.com/macros/s/AKfycbyemoX3aH6vuz_1ZqbC4HyjBd3zmICQnWmb1OZQV-O3Kd5wnsT2CjIhrReMmqaBVu-F/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyemoX3aH6vuz_1ZqbC4HyjBd3zmICQnWmb1OZQV-O3Kd5wnsT2CjIhrReMmqaBVu-F/exec";
 
 async function sendToSheets(roundData) {
-  const url = SHEETS_URL || localStorage.getItem("golf-sheets-url");
-  if (!url) return { ok: false, error: "Ingen Google Sheets URL konfigurert" };
-
+  if (!SHEETS_URL) return { ok: false, error: "Ingen URL" };
   try {
-    const response = await fetch(url, {
+    await fetch(SHEETS_URL, {
       method: "POST",
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(roundData),
     });
-    // no-cors gir opaque response — vi antek suksess
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error.message };
@@ -597,10 +594,8 @@ function GolfShotTracker() {
     try { localStorage.setItem("golf-reports", JSON.stringify(updated)); localStorage.removeItem("golf-active-round"); } catch(e){}
 
     // Send til Google Sheets
-    const sheetsUrl = localStorage.getItem("golf-sheets-url");
-    if (sheetsUrl) {
-      setSheetsStatus("sending");
-      const roundData = {
+    setSheetsStatus("sending");
+    const roundData = {
         date, time, tee,
         holesPlayed: reportHoles.length,
         score: rScore, par: rPar, diff: rScore - rPar,
@@ -633,10 +628,6 @@ function GolfShotTracker() {
       const result = await sendToSheets(roundData);
       setSheetsStatus(result.ok ? "ok" : "error");
       setTimeout(() => setSheetsStatus(null), 5000);
-    } else {
-      setSheetsStatus("no-url");
-      setTimeout(() => setSheetsStatus(null), 5000);
-    }
 
     setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
     setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false);
@@ -657,7 +648,7 @@ function GolfShotTracker() {
               </p>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              {[{key:"play",icon:"🏌️"},{key:"scorecard",icon:"📋"},{key:"stats",icon:"📊"},{key:"reports",icon:"📄"},{key:"calibrate",icon:"⚙️"}].map(tab => (
+              {[{key:"play",icon:"🏌️"},{key:"reports",icon:"📄"},{key:"calibrate",icon:"⚙️"}].map(tab => (
                 <button key={tab.key} onClick={()=>setView(tab.key)} style={{
                   width: 38, height: 38, borderRadius: 8, border: "none",
                   background: view===tab.key?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",
@@ -868,31 +859,6 @@ function GolfShotTracker() {
           </>
         )}
 
-        {view === "scorecard" && <Scorecard holes={holes} currentHole={currentHole} currentShots={currentShots} tee={tee} />}
-
-        {view === "stats" && (
-          <div>
-            <div style={{ fontSize: 13, color: "#666", fontWeight: 700, marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>Kølle-statistikk</div>
-            {(()=>{
-              const all=[...holes.flatMap(h=>h.shots),...currentShots]; const cs={};
-              all.forEach(s=>{if(!cs[s.club])cs[s.club]={count:0,dists:[]};cs[s.club].count++;if(s.distance)cs[s.club].dists.push(s.distance);});
-              const entries=Object.entries(cs).sort((a,b)=>{const aA=a[1].dists.length?a[1].dists.reduce((s,d)=>s+d,0)/a[1].dists.length:0;const bA=b[1].dists.length?b[1].dists.reduce((s,d)=>s+d,0)/b[1].dists.length:0;return bA-aA;});
-              if(!entries.length)return <div style={{textAlign:"center",color:"#999",padding:30,fontSize:14}}>Ingen slag enno</div>;
-              const maxD=Math.max(...entries.flatMap(([,v])=>v.dists),1);
-              return entries.map(([club,st])=>{
-                const avg=st.dists.length?Math.round(st.dists.reduce((s,d)=>s+d,0)/st.dists.length):null;
-                const mx=st.dists.length?Math.max(...st.dists):null;
-                return (<div key={club} style={{padding:"12px 14px",marginBottom:6,background:"#fff",border:"1px solid #ddd",borderRadius:8}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:15,color:"#1a3a25",fontWeight:700}}>{club}</span><span style={{fontSize:13,color:"#666"}}>{st.count} slag</span></div>
-                  {avg!=null&&<><div style={{height:6,borderRadius:3,background:"#e0e0d8",overflow:"hidden",marginBottom:4}}><div style={{height:"100%",borderRadius:3,background:"linear-gradient(90deg,#1a3a25,#4a8c5c)",width:`${(avg/maxD)*100}%`}}/></div>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#666"}}><span>Snitt: <b style={{color:"#1a3a25"}}>{avg}m</b></span><span>Lengst: <b style={{color:"#1a3a25"}}>{mx}m</b></span></div></>}
-                </div>);
-              });
-            })()}
-            {holes.length>0&&<div style={{marginTop:20,padding:16,textAlign:"center",background:"#fff",borderRadius:10,border:"2px solid #1a3a25"}}><div style={{fontSize:36,fontWeight:300,color:"#1a3a25",fontFamily:"monospace"}}>{totalScore}</div><div style={{fontSize:14,marginTop:2,color:scoreDiff>0?"#cc0000":scoreDiff<0?"#1a7a1a":"#0066cc",fontWeight:700}}>{scoreDiff>0?`+${scoreDiff}`:scoreDiff===0?"Even par":scoreDiff}</div><div style={{fontSize:12,color:"#888",marginTop:4}}>{holes.length} hol spelt av 18</div></div>}
-          </div>
-        )}
-
         {/* Avslutt runde */}
         {(holes.length>0||currentShots.length>0)&&(
           <div style={{marginTop:20,paddingTop:16,borderTop:"2px solid #ddd"}}>
@@ -961,24 +927,8 @@ function GolfShotTracker() {
 
             {/* Google Sheets oppsett */}
             <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:10,marginTop:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Google Sheets</div>
-            <div style={{fontSize:13,color:"#666",marginBottom:10,lineHeight:1.5}}>Lim inn URL-en frå Google Apps Script for å lagre rundedata automatisk.</div>
-            <input
-              type="text"
-              placeholder="https://script.google.com/macros/s/.../exec"
-              defaultValue={localStorage.getItem("golf-sheets-url") || ""}
-              onBlur={(e) => {
-                const url = e.target.value.trim();
-                if (url) { localStorage.setItem("golf-sheets-url", url); }
-                else { localStorage.removeItem("golf-sheets-url"); }
-              }}
-              style={{
-                width:"100%",padding:"12px",fontSize:13,fontFamily:"monospace",
-                border:"2px solid #1a3a25",borderRadius:8,marginBottom:6,
-                background:"#fff",color:"#1a1a1a",
-              }}
-            />
-            <div style={{fontSize:11,color:"#999",marginBottom:10}}>
-              {localStorage.getItem("golf-sheets-url") ? "✅ URL lagra — rundedata vert sendt automatisk" : "Ingen URL sett — data vert berre lagra lokalt"}
+            <div style={{fontSize:11,color:"#2d8a4e",marginBottom:10,fontWeight:600}}>
+              ✅ Google Sheets aktiv — rundedata vert sendt automatisk
             </div>
           </div>
         )}
@@ -989,14 +939,13 @@ function GolfShotTracker() {
             {sheetsStatus && (
               <div style={{
                 padding:"10px 14px",marginBottom:10,borderRadius:8,fontSize:13,fontWeight:600,
-                background: sheetsStatus==="ok"?"#e8f5e9":sheetsStatus==="sending"?"#fff8e1":sheetsStatus==="no-url"?"#fff8e1":"#ffebee",
-                border: `2px solid ${sheetsStatus==="ok"?"#4a8c5c":sheetsStatus==="sending"?"#e6a800":sheetsStatus==="no-url"?"#e6a800":"#cc4444"}`,
+                background: sheetsStatus==="ok"?"#e8f5e9":sheetsStatus==="sending"?"#fff8e1":"#ffebee",
+                border: `2px solid ${sheetsStatus==="ok"?"#4a8c5c":sheetsStatus==="sending"?"#e6a800":"#cc4444"}`,
                 color: sheetsStatus==="ok"?"#1a3a25":sheetsStatus==="error"?"#cc4444":"#8a6500",
               }}>
                 {sheetsStatus==="sending"&&"📤 Sender til Google Sheets..."}
                 {sheetsStatus==="ok"&&"✅ Rundedata sendt til Google Sheets"}
                 {sheetsStatus==="error"&&"❌ Klarte ikkje sende til Google Sheets"}
-                {sheetsStatus==="no-url"&&"⚠️ Google Sheets ikkje konfigurert — gå til ⚙️ for å setje opp"}
               </div>
             )}
             {savedReports.length===0?<div style={{textAlign:"center",color:"#999",padding:30,fontSize:14}}>Ingen rapportar enno</div>

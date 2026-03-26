@@ -162,9 +162,9 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       zoomControl: false,
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OSM',
-      maxZoom: 20,
+    L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png', {
+      attribution: '© <a href="https://www.kartverket.no/">Kartverket</a>',
+      maxZoom: 18,
     }).addTo(map);
 
     L.control.zoom({ position: 'topright' }).addTo(map);

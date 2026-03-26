@@ -164,7 +164,8 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
 
     L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png', {
       attribution: '© <a href="https://www.kartverket.no/">Kartverket</a>',
-      maxZoom: 18,
+      maxZoom: 21,
+      maxNativeZoom: 18,
     }).addTo(map);
 
     L.control.zoom({ position: 'topright' }).addTo(map);

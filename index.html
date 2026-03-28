@@ -576,13 +576,17 @@ function GolfShotTracker() {
     setMessage(`↩ Fjerna slag ${removed.shotNumber} (${removed.club})`);
   };
 
-  const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error" | "no-url"
+  const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error"
   const [showPickup, setShowPickup] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   const finishRound = async () => {
+    if (isSending) return; // Hindre dobbeltklikk
+    setIsSending(true);
+
     let reportHoles = [...holes];
     if (currentShots.length > 0) reportHoles.push({ hole: currentHole, shots: currentShots, unfinished: true });
-    if (reportHoles.length === 0) return;
+    if (reportHoles.length === 0) { setIsSending(false); return; }
     const rScore = reportHoles.reduce((s,h)=>s+h.shots.length,0);
     const rPar = reportHoles.reduce((s,h)=>s+COURSE_DATA[h.hole-1].par,0);
     const html = buildReportHTML(reportHoles, tee, teePositions, greenPositions);
@@ -603,18 +607,26 @@ function GolfShotTracker() {
         holes: reportHoles.map(h => ({
           hole: h.hole,
           par: COURSE_DATA[h.hole-1].par,
+          index: COURSE_DATA[h.hole-1].index,
+          holeLength: tee === "yellow" ? COURSE_DATA[h.hole-1].yellowM : COURSE_DATA[h.hole-1].redM,
           shots: h.shots.length,
           diff: h.shots.length - COURSE_DATA[h.hole-1].par,
           unfinished: h.unfinished || false,
+          pickup: h.pickup || false,
           details: h.shots.map(s => ({
             num: s.shotNumber, club: s.club,
             distance: s.distance || null,
             toHole: s.toHole || null,
+            lat: s.pos ? s.pos.lat : null,
+            lon: s.pos ? s.pos.lon : null,
+            penalty: s.penalty || false,
+            pickup: s.pickup || false,
           })),
         })),
         clubStats: (() => {
           const cs = {};
           reportHoles.flatMap(h=>h.shots).forEach(s => {
+            if (s.penalty || s.pickup) return;
             if (!cs[s.club]) cs[s.club] = { count: 0, dists: [] };
             cs[s.club].count++;
             if (s.distance) cs[s.club].dists.push(s.distance);
@@ -628,11 +640,11 @@ function GolfShotTracker() {
       };
       const result = await sendToSheets(roundData);
       setSheetsStatus(result.ok ? "ok" : "error");
-      setTimeout(() => setSheetsStatus(null), 5000);
 
     setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
     setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false);
-    setMessage(`📄 Rapport lagra: ${filename}`); setView("reports");
+    setIsSending(false);
+    setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
   };
 
   return (
@@ -869,7 +881,7 @@ function GolfShotTracker() {
               <div style={{fontSize:14,color:"#666",marginBottom:16}}>{holes.length} hol · {totalScore} slag</div>
               <div style={{display:"flex",gap:8}}>
                 <button onClick={()=>setConfirmFinish(false)} style={{flex:1,padding:"14px",background:"#fff",border:"2px solid #ccc",borderRadius:8,color:"#666",fontSize:15,fontWeight:600,cursor:"pointer"}}>Avbryt</button>
-                <button onClick={finishRound} style={{flex:2,padding:"14px",background:"#cc4444",border:"2px solid #cc4444",borderRadius:8,color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>📄 Avslutt og lagre</button>
+                <button onClick={finishRound} disabled={isSending} style={{flex:2,padding:"14px",background:isSending?"#999":"#cc4444",border:isSending?"2px solid #999":"2px solid #cc4444",borderRadius:8,color:"#fff",fontSize:16,fontWeight:700,cursor:isSending?"not-allowed":"pointer",opacity:isSending?0.7:1}}>{isSending?"📤 Sender...":"📄 Avslutt og lagre"}</button>
               </div>
             </div>}
           </div>

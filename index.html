@@ -188,7 +188,7 @@ async function sendToSheets(roundData) {
 }
 
 // ─── Leaflet Map Component ───
-function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub }) {
+function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, baneDispersion }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
@@ -312,35 +312,81 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       markersRef.current.push(dashLine);
     }
 
-    // Spreiingsellipse for valt kølle
-    if (selectedClub && CLUB_DISPERSION[selectedClub] && lastPt && greenPos) {
-      const disp = CLUB_DISPERSION[selectedClub];
+    // Spreiingsellipsar for valt kølle
+    if (selectedClub && lastPt && greenPos) {
       const bearing = calcBearing(lastPt.lat, lastPt.lon, greenPos.lat, greenPos.lon);
-      const ellipsePoints = generateEllipse(
-        lastPt.lat, lastPt.lon, bearing,
-        disp.carry, disp.carryStd, disp.side, disp.sideStd
-      );
-      const ellipse = L.polygon(ellipsePoints, {
-        color: "#e67300", fillColor: "#e67300", fillOpacity: 0.15,
-        weight: 2, dashArray: "6,4", interactive: false,
-      }).addTo(map);
-      markersRef.current.push(ellipse);
-
-      // Senterpunkt (snitt landingsposisjon)
-      const centerPt = pointAtDistanceAndBearing(lastPt.lat, lastPt.lon, disp.carry, bearing);
-      // Juster for sidebias
       const mPerDegLon = 111320 * Math.cos(lastPt.lat * Math.PI / 180);
-      const adjustedCenter = {
-        lat: centerPt.lat + (disp.side * Math.cos(bearing)) / 111320,
-        lon: centerPt.lon + (disp.side * Math.sin(bearing)) / mPerDegLon,
-      };
-      const cm = L.circleMarker([adjustedCenter.lat, adjustedCenter.lon], {
-        radius: 5, color: "#e67300", fillColor: "#fff", fillOpacity: 1, weight: 2, interactive: false,
-      }).addTo(map);
-      markersRef.current.push(cm);
+
+      // 1. Trackman-ellipse (carry — oransje, fast)
+      const trackman = CLUB_DISPERSION[selectedClub];
+      if (trackman) {
+        const ellipsePoints = generateEllipse(
+          lastPt.lat, lastPt.lon, bearing,
+          trackman.carry, trackman.carryStd, trackman.side, trackman.sideStd
+        );
+        const ellipse = L.polygon(ellipsePoints, {
+          color: "#e67300", fillColor: "#e67300", fillOpacity: 0.12,
+          weight: 2, dashArray: "6,4", interactive: false,
+        }).addTo(map);
+        markersRef.current.push(ellipse);
+
+        // Senterpunkt carry
+        const centerPt = pointAtDistanceAndBearing(lastPt.lat, lastPt.lon, trackman.carry, bearing);
+        const adjustedCenter = {
+          lat: centerPt.lat + (trackman.side * Math.cos(bearing)) / 111320,
+          lon: centerPt.lon + (trackman.side * Math.sin(bearing)) / mPerDegLon,
+        };
+        const cm = L.circleMarker([adjustedCenter.lat, adjustedCenter.lon], {
+          radius: 4, color: "#e67300", fillColor: "#e67300", fillOpacity: 0.8, weight: 1, interactive: false,
+        }).addTo(map);
+        markersRef.current.push(cm);
+
+        // Label
+        const label = L.marker([adjustedCenter.lat, adjustedCenter.lon], {
+          icon: L.divIcon({
+            html: `<div style="font-size:10px;font-weight:700;color:#e67300;text-shadow:1px 1px 1px #fff,-1px -1px 1px #fff;white-space:nowrap;pointer-events:none">Carry ${trackman.carry}m</div>`,
+            iconSize: [60, 14], className: '', iconAnchor: [30, -6],
+          }), interactive: false,
+        }).addTo(map);
+        markersRef.current.push(label);
+      }
+
+      // 2. Banedata-ellipse (total — blå, veks over tid)
+      if (baneDispersion) {
+        const ellipsePoints = generateEllipse(
+          lastPt.lat, lastPt.lon, bearing,
+          baneDispersion.carry, baneDispersion.carryStd, baneDispersion.side, baneDispersion.sideStd
+        );
+        const ellipse = L.polygon(ellipsePoints, {
+          color: "#2266cc", fillColor: "#2266cc", fillOpacity: 0.10,
+          weight: 2, dashArray: "4,6", interactive: false,
+        }).addTo(map);
+        markersRef.current.push(ellipse);
+
+        // Senterpunkt total
+        const centerPt = pointAtDistanceAndBearing(lastPt.lat, lastPt.lon, baneDispersion.carry, bearing);
+        const adjustedCenter = {
+          lat: centerPt.lat + (baneDispersion.side * Math.cos(bearing)) / 111320,
+          lon: centerPt.lon + (baneDispersion.side * Math.sin(bearing)) / mPerDegLon,
+        };
+        const cm = L.circleMarker([adjustedCenter.lat, adjustedCenter.lon], {
+          radius: 4, color: "#2266cc", fillColor: "#2266cc", fillOpacity: 0.8, weight: 1, interactive: false,
+        }).addTo(map);
+        markersRef.current.push(cm);
+
+        // Label
+        const shotCount = baneDispersion._count || "?";
+        const label = L.marker([adjustedCenter.lat, adjustedCenter.lon], {
+          icon: L.divIcon({
+            html: `<div style="font-size:10px;font-weight:700;color:#2266cc;text-shadow:1px 1px 1px #fff,-1px -1px 1px #fff;white-space:nowrap;pointer-events:none">Total ${baneDispersion.carry}m (${shotCount})</div>`,
+            iconSize: [80, 14], className: '', iconAnchor: [40, 10],
+          }), interactive: false,
+        }).addTo(map);
+        markersRef.current.push(label);
+      }
     }
 
-  }, [currentHole, currentShots, holes, teePos, greenPos, selectedClub]);
+  }, [currentHole, currentShots, holes, teePos, greenPos, selectedClub, baneDispersion]);
 
   // Sentrer kart på gjeldande hol
   useEffect(() => {
@@ -530,9 +576,24 @@ function GolfShotTracker() {
   const [calHole, setCalHole] = useState(1);
   const [calStep, setCalStep] = useState(null); // null | "tee" | "green"
   const [clubUsage, setClubUsage] = useState({}); // { "Driver": 45, "Putter": 38, ... }
+  // Historiske slagdata per kølle: { "Driver": [{carry: 145, side: -8}, ...], ... }
+  const [clubShotHistory, setClubShotHistory] = useState({});
 
   // Sorterte køller basert på bruksfrekvens
   const sortedClubs = [...CLUBS].sort((a, b) => (clubUsage[b] || 0) - (clubUsage[a] || 0));
+
+  // Rekn ut banedata-ellipse frå historiske slag
+  function calcBaneDispersion(club) {
+    const shots = clubShotHistory[club];
+    if (!shots || shots.length < 3) return null;
+    const carries = shots.map(s => s.carry);
+    const sides = shots.map(s => s.side);
+    const avgCarry = carries.reduce((a,b) => a+b, 0) / carries.length;
+    const avgSide = sides.reduce((a,b) => a+b, 0) / sides.length;
+    const stdCarry = Math.sqrt(carries.reduce((s,v) => s + (v-avgCarry)**2, 0) / carries.length);
+    const stdSide = Math.sqrt(sides.reduce((s,v) => s + (v-avgSide)**2, 0) / sides.length);
+    return { carry: Math.round(avgCarry), carryStd: Math.round(stdCarry), side: Math.round(avgSide), sideStd: Math.round(stdSide) };
+  }
 
   // Last rapportar, aktiv runde og kalibrerte posisjonar frå localStorage
   useEffect(() => {
@@ -540,6 +601,7 @@ function GolfShotTracker() {
     try { const t = localStorage.getItem("golf-tee-pos"); if (t) setTeePositions(JSON.parse(t)); } catch(e){}
     try { const g = localStorage.getItem("golf-green-pos"); if (g) setGreenPositions(JSON.parse(g)); } catch(e){}
     try { const c = localStorage.getItem("golf-club-usage"); if (c) setClubUsage(JSON.parse(c)); } catch(e){}
+    try { const h = localStorage.getItem("golf-shot-history"); if (h) setClubShotHistory(JSON.parse(h)); } catch(e){}
     try {
       const r = localStorage.getItem("golf-active-round");
       if (r) {
@@ -601,6 +663,24 @@ function GolfShotTracker() {
     setClubUsage(newUsage);
     try { localStorage.setItem("golf-club-usage", JSON.stringify(newUsage)); } catch(e){}
 
+    // Registrer slagdata for banebasert spreiingsmønster (ikkje straff/pickup)
+    if (distance && distance > 5 && lastPos && greenPos && selectedClub !== "Putter") {
+      // Rekn ut sidevegs avvik: kor langt frå linja mot green ballen landa
+      const bearingToGreen = calcBearing(lastPos.lat, lastPos.lon, greenPos.lat, greenPos.lon);
+      const bearingToShot = calcBearing(lastPos.lat, lastPos.lon, pos.lat, pos.lon);
+      const angleDiff = bearingToShot - bearingToGreen;
+      const sideDeviation = distance * Math.sin(angleDiff); // positiv = høgre, negativ = venstre
+      const carryAlongLine = distance * Math.cos(angleDiff); // avstand langs linja mot green
+
+      const newHistory = { ...clubShotHistory };
+      if (!newHistory[selectedClub]) newHistory[selectedClub] = [];
+      newHistory[selectedClub] = [...newHistory[selectedClub], { carry: Math.round(carryAlongLine), side: Math.round(sideDeviation) }];
+      // Behald maks 50 slag per kølle
+      if (newHistory[selectedClub].length > 50) newHistory[selectedClub] = newHistory[selectedClub].slice(-50);
+      setClubShotHistory(newHistory);
+      try { localStorage.setItem("golf-shot-history", JSON.stringify(newHistory)); } catch(e){}
+    }
+
     if (inHole) {
       const score = updatedShots.length;
       const diff = score - holeInfo.par;
@@ -623,7 +703,7 @@ function GolfShotTracker() {
       const toHoleText = toHole ? ` · ${toHole}m att` : "";
       setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
     }
-  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo]);
+  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo, clubUsage, clubShotHistory]);
 
   // Green-par: hol 1&10, 2&11, ... 9&18 deler same green
   const GREEN_PAIRS = [[0,9],[1,10],[2,11],[3,12],[4,13],[5,14],[6,15],[7,16],[8,17]];
@@ -793,7 +873,7 @@ function GolfShotTracker() {
 
             {/* Kart — alltid synleg */}
             <div style={{ marginBottom: 10 }}>
-              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} />
+              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} baneDispersion={selectedClub ? (()=>{ const d = calcBaneDispersion(selectedClub); return d ? {...d, _count: (clubShotHistory[selectedClub]||[]).length} : null; })() : null} />
               {step === "map" && (
                 <div style={{ textAlign: "center", marginTop: 6, fontSize: 14, fontWeight: 700, color: "#1a3a25" }}>
                   👆 Trykk på kartet der ballen landa
@@ -1020,7 +1100,7 @@ function GolfShotTracker() {
             </div>
 
             <div style={{marginBottom:10}}>
-              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={null} />
+              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={null} baneDispersion={null} />
             </div>
 
             {(()=>{

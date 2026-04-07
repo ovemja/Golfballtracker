@@ -883,19 +883,6 @@ function GolfShotTracker() {
               )}
             </div>
 
-            {/* Slag-liste */}
-            {currentShots.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                {currentShots.map((s, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", marginBottom: 4, background: s.penalty ? "#fff8e6" : s.pickup ? "#ffebee" : "#fff", border: `1px solid ${s.penalty ? "#e6a800" : s.pickup ? "#cc4444" : "#ccc"}`, borderRadius: 8, fontSize: 15 }}>
-                    <span style={{ width: 28, height: 28, borderRadius: "50%", background: s.penalty ? "#cc6600" : s.pickup ? "#cc4444" : "#1a3a25", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", fontWeight: 700, flexShrink: 0 }}>{s.penalty ? "⚠️" : s.shotNumber}</span>
-                    <span style={{ flex: 1, fontWeight: 600, color: s.penalty ? "#cc6600" : s.pickup ? "#cc4444" : "#1a1a1a" }}>{s.club}</span>
-                    {s.distance && <span style={{ color: "#1a3a25", fontFamily: "monospace", fontWeight: 700 }}>{s.distance}m</span>}
-                    {s.toHole != null && !s.penalty && !s.pickup && <span style={{ color: "#2d8a4e", fontSize: 12, fontWeight: 600 }}>⛳{s.toHole}m</span>}
-                  </div>
-                ))}
-              </div>
-            )}
 
             {/* Vel kølle */}
             {step === "club" && (

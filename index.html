@@ -190,17 +190,21 @@ async function sendToSheets(roundData) {
 }
 
 // ─── Leaflet Map Component ───
-function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, baneDispersion }) {
+function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, baneDispersion, aimPoint, onSetAimPoint }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
   const clickHandlerRef = useRef(null);
+  const aimPointRef = useRef(null);
+  const longPressRef = useRef(null);
 
   const greenPos = greenPositions[currentHole - 1];
   const teePos = teePositions[currentHole - 1];
+  const aimTarget = aimPoint || greenPos; // Bruk siktepunkt viss sett, elles green
 
   // Hald click-handler oppdatert via ref (ingen window-forureining)
   clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
+  aimPointRef.current = onSetAimPoint;
 
   useEffect(() => {
     if (mapInstanceRef.current) return;
@@ -223,6 +227,35 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       const pos = { lat: e.latlng.lat, lon: e.latlng.lng };
       clickHandlerRef.current?.(pos);
     });
+
+    // Long-press for å setje siktepunkt (hold 500ms)
+    let pressTimer = null;
+    let pressPos = null;
+    const startPress = (e) => {
+      const latlng = e.latlng;
+      if (!latlng) return;
+      pressPos = latlng;
+      pressTimer = setTimeout(() => {
+        const pos = { lat: pressPos.lat, lon: pressPos.lng };
+        aimPointRef.current?.(pos);
+        pressTimer = null;
+      }, 500);
+    };
+    const cancelPress = () => {
+      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    };
+    map.on('mousedown', startPress);
+    map.on('mouseup', cancelPress);
+    map.on('mousemove', cancelPress);
+    map.on('touchstart', (e) => {
+      if (e.originalEvent.touches.length === 1) {
+        const touch = e.originalEvent.touches[0];
+        const latlng = map.containerPointToLatLng(L.point(touch.clientX - map.getContainer().getBoundingClientRect().left, touch.clientY - map.getContainer().getBoundingClientRect().top));
+        startPress({ latlng });
+      }
+    });
+    map.on('touchend', cancelPress);
+    map.on('touchmove', cancelPress);
 
     mapInstanceRef.current = map;
 
@@ -314,9 +347,24 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       markersRef.current.push(dashLine);
     }
 
+    // Siktepunkt-markør (viss sett manuelt)
+    if (aimPoint && !calibrateMode) {
+      const aimMarker = L.circleMarker([aimPoint.lat, aimPoint.lon], {
+        radius: 8, color: "#cc0000", fillColor: "#ff4444", fillOpacity: 0.6, weight: 2, interactive: false,
+      }).addTo(map);
+      markersRef.current.push(aimMarker);
+      const aimLabel = L.marker([aimPoint.lat, aimPoint.lon], {
+        icon: L.divIcon({
+          html: `<div style="font-size:10px;font-weight:700;color:#cc0000;text-shadow:1px 1px 1px #fff,-1px -1px 1px #fff;white-space:nowrap;pointer-events:none">🎯 Siktepunkt</div>`,
+          iconSize: [80, 14], className: '', iconAnchor: [40, -10],
+        }), interactive: false,
+      }).addTo(map);
+      markersRef.current.push(aimLabel);
+    }
+
     // Spreiingsellipsar for valt kølle
-    if (selectedClub && lastPt && greenPos) {
-      const bearing = calcBearing(lastPt.lat, lastPt.lon, greenPos.lat, greenPos.lon);
+    if (selectedClub && lastPt && aimTarget) {
+      const bearing = calcBearing(lastPt.lat, lastPt.lon, aimTarget.lat, aimTarget.lon);
       const mPerDegLon = 111320 * Math.cos(lastPt.lat * Math.PI / 180);
 
       // 1. Trackman-ellipse (carry — oransje, fast)
@@ -388,7 +436,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       }
     }
 
-  }, [currentHole, currentShots, holes, teePos, greenPos, selectedClub, baneDispersion]);
+  }, [currentHole, currentShots, holes, teePos, greenPos, selectedClub, baneDispersion, aimPoint]);
 
   // Sentrer kart på gjeldande hol
   useEffect(() => {
@@ -571,6 +619,7 @@ function GolfShotTracker() {
   const [tee, setTee] = useState("yellow");
   const [lastPos, setLastPos] = useState(DEFAULT_TEE_POSITIONS[0]);
   const [inHole, setInHole] = useState(false);
+  const [aimPoint, setAimPoint] = useState(null); // Manuelt siktepunkt for ellipse
   const [savedReports, setSavedReports] = useState([]);
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [teePositions, setTeePositions] = useState([...DEFAULT_TEE_POSITIONS]);
@@ -641,6 +690,7 @@ function GolfShotTracker() {
 
   const handleSelectClub = club => {
     setSelectedClub(club);
+    setAimPoint(null); // Nullstill siktepunkt ved ny kølle
     setStep("map");
     setMessage(`${club} valt — trykk på kartet der ballen landa`);
   };
@@ -808,7 +858,7 @@ function GolfShotTracker() {
       setSheetsStatus(result.ok ? "ok" : "error");
 
     setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
-    setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false);
+    setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false); setAimPoint(null);
     setIsSending(false);
     setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
   };
@@ -875,10 +925,11 @@ function GolfShotTracker() {
 
             {/* Kart — alltid synleg */}
             <div style={{ marginBottom: 10 }}>
-              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} baneDispersion={selectedClub ? (()=>{ const d = calcBaneDispersion(selectedClub); return d ? {...d, _count: (clubShotHistory[selectedClub]||[]).length} : null; })() : null} />
+              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} baneDispersion={selectedClub ? (()=>{ const d = calcBaneDispersion(selectedClub); return d ? {...d, _count: (clubShotHistory[selectedClub]||[]).length} : null; })() : null} aimPoint={aimPoint} onSetAimPoint={(pos)=>{ setAimPoint(pos); setMessage(`🎯 Siktepunkt sett — ellipse rotert`); }} />
               {step === "map" && (
-                <div style={{ textAlign: "center", marginTop: 6, fontSize: 14, fontWeight: 700, color: "#1a3a25" }}>
-                  👆 Trykk på kartet der ballen landa
+                <div style={{ textAlign: "center", marginTop: 6 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1a3a25" }}>👆 Trykk på kartet der ballen landa</div>
+                  <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Hold inne for å endre sikteretning</div>
                 </div>
               )}
             </div>
@@ -1089,7 +1140,7 @@ function GolfShotTracker() {
             </div>
 
             <div style={{marginBottom:10}}>
-              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={null} baneDispersion={null} />
+              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={null} baneDispersion={null} aimPoint={null} onSetAimPoint={null} />
             </div>
 
             {(()=>{

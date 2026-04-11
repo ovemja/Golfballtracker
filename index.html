@@ -230,13 +230,15 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
 
     // Long-press for å setje siktepunkt (hold 500ms)
     let pressTimer = null;
-    let pressPos = null;
+    let startXY = null;
+    const MOVE_TOLERANCE = 15; // pikslar — ignorer rørsle mindre enn dette
     const startPress = (e) => {
       const latlng = e.latlng;
+      const pixel = e.containerPoint;
       if (!latlng) return;
-      pressPos = latlng;
+      startXY = pixel;
       pressTimer = setTimeout(() => {
-        const pos = { lat: pressPos.lat, lon: pressPos.lng };
+        const pos = { lat: latlng.lat, lon: latlng.lng };
         aimPointRef.current?.(pos);
         pressTimer = null;
       }, 500);
@@ -244,18 +246,38 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
     const cancelPress = () => {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
     };
+    const maybeCancelPress = (e) => {
+      if (!pressTimer || !startXY) return;
+      const pt = e.containerPoint;
+      if (pt && Math.abs(pt.x - startXY.x) + Math.abs(pt.y - startXY.y) > MOVE_TOLERANCE) {
+        cancelPress();
+      }
+    };
     map.on('mousedown', startPress);
     map.on('mouseup', cancelPress);
-    map.on('mousemove', cancelPress);
+    map.on('mousemove', maybeCancelPress);
+    let touchStartXY = null;
     map.on('touchstart', (e) => {
       if (e.originalEvent.touches.length === 1) {
         const touch = e.originalEvent.touches[0];
-        const latlng = map.containerPointToLatLng(L.point(touch.clientX - map.getContainer().getBoundingClientRect().left, touch.clientY - map.getContainer().getBoundingClientRect().top));
-        startPress({ latlng });
+        const rect = map.getContainer().getBoundingClientRect();
+        const px = touch.clientX - rect.left;
+        const py = touch.clientY - rect.top;
+        touchStartXY = { x: px, y: py };
+        const latlng = map.containerPointToLatLng(L.point(px, py));
+        startPress({ latlng, containerPoint: L.point(px, py) });
       }
     });
     map.on('touchend', cancelPress);
-    map.on('touchmove', cancelPress);
+    map.on('touchmove', (e) => {
+      if (!pressTimer || !touchStartXY) return;
+      const touch = e.originalEvent.touches[0];
+      if (!touch) return;
+      const rect = map.getContainer().getBoundingClientRect();
+      const dx = Math.abs(touch.clientX - rect.left - touchStartXY.x);
+      const dy = Math.abs(touch.clientY - rect.top - touchStartXY.y);
+      if (dx + dy > MOVE_TOLERANCE) cancelPress();
+    });
 
     mapInstanceRef.current = map;
 

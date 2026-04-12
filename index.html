@@ -190,21 +190,17 @@ async function sendToSheets(roundData) {
 }
 
 // ─── Leaflet Map Component ───
-function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, baneDispersion, aimPoint, onSetAimPoint }) {
+function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, baneDispersion, aimPoint }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
   const clickHandlerRef = useRef(null);
-  const aimPointRef = useRef(null);
-  const longPressRef = useRef(null);
 
   const greenPos = greenPositions[currentHole - 1];
   const teePos = teePositions[currentHole - 1];
-  const aimTarget = aimPoint || greenPos; // Bruk siktepunkt viss sett, elles green
+  const aimTarget = aimPoint || greenPos;
 
-  // Hald click-handler oppdatert via ref (ingen window-forureining)
   clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
-  aimPointRef.current = onSetAimPoint;
 
   useEffect(() => {
     if (mapInstanceRef.current) return;
@@ -228,61 +224,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       clickHandlerRef.current?.(pos);
     });
 
-    // Long-press for å setje siktepunkt (hold 500ms)
-    let pressTimer = null;
-    let startXY = null;
-    const MOVE_TOLERANCE = 15; // pikslar — ignorer rørsle mindre enn dette
-    const startPress = (e) => {
-      const latlng = e.latlng;
-      const pixel = e.containerPoint;
-      if (!latlng) return;
-      startXY = pixel;
-      pressTimer = setTimeout(() => {
-        const pos = { lat: latlng.lat, lon: latlng.lng };
-        aimPointRef.current?.(pos);
-        pressTimer = null;
-      }, 500);
-    };
-    const cancelPress = () => {
-      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-    };
-    const maybeCancelPress = (e) => {
-      if (!pressTimer || !startXY) return;
-      const pt = e.containerPoint;
-      if (pt && Math.abs(pt.x - startXY.x) + Math.abs(pt.y - startXY.y) > MOVE_TOLERANCE) {
-        cancelPress();
-      }
-    };
-    map.on('mousedown', startPress);
-    map.on('mouseup', cancelPress);
-    map.on('mousemove', maybeCancelPress);
-    let touchStartXY = null;
-    map.on('touchstart', (e) => {
-      if (e.originalEvent.touches.length === 1) {
-        const touch = e.originalEvent.touches[0];
-        const rect = map.getContainer().getBoundingClientRect();
-        const px = touch.clientX - rect.left;
-        const py = touch.clientY - rect.top;
-        touchStartXY = { x: px, y: py };
-        const latlng = map.containerPointToLatLng(L.point(px, py));
-        startPress({ latlng, containerPoint: L.point(px, py) });
-      }
-    });
-    map.on('touchend', cancelPress);
-    map.on('touchmove', (e) => {
-      if (!pressTimer || !touchStartXY) return;
-      const touch = e.originalEvent.touches[0];
-      if (!touch) return;
-      const rect = map.getContainer().getBoundingClientRect();
-      const dx = Math.abs(touch.clientX - rect.left - touchStartXY.x);
-      const dy = Math.abs(touch.clientY - rect.top - touchStartXY.y);
-      if (dx + dy > MOVE_TOLERANCE) cancelPress();
-    });
-
     mapInstanceRef.current = map;
-
-    // Hindre iOS kontekstmeny på kartet
-    map.getContainer().addEventListener('contextmenu', (e) => e.preventDefault());
 
     return () => { map.remove(); mapInstanceRef.current = null; };
   }, []);
@@ -470,7 +412,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
     map.setView([teePos.lat, teePos.lon], 17, { animate: true });
   }, [currentHole, teePos]);
 
-  return <div ref={mapRef} style={{ width: "100%", height: 350, borderRadius: 12, border: "2px solid #1a3a25", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }} />;
+  return <div ref={mapRef} style={{ width: "100%", height: 350, borderRadius: 12, border: "2px solid #1a3a25" }} />;
 }
 
 // ─── Report Builder ───
@@ -644,7 +586,8 @@ function GolfShotTracker() {
   const [tee, setTee] = useState("yellow");
   const [lastPos, setLastPos] = useState(DEFAULT_TEE_POSITIONS[0]);
   const [inHole, setInHole] = useState(false);
-  const [aimPoint, setAimPoint] = useState(null); // Manuelt siktepunkt for ellipse
+  const [aimPoint, setAimPoint] = useState(null);
+  const [aimMode, setAimMode] = useState(false); // true = neste trykk set siktepunkt // Manuelt siktepunkt for ellipse
   const [savedReports, setSavedReports] = useState([]);
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [teePositions, setTeePositions] = useState([...DEFAULT_TEE_POSITIONS]);
@@ -715,13 +658,22 @@ function GolfShotTracker() {
 
   const handleSelectClub = club => {
     setSelectedClub(club);
-    setAimPoint(null); // Nullstill siktepunkt ved ny kølle
+    setAimPoint(null);
+    setAimMode(false);
     setStep("map");
     setMessage(`${club} valt — trykk på kartet der ballen landa`);
   };
 
   const handlePlaceBall = useCallback((pos) => {
     if (step !== "map" || !selectedClub) return;
+
+    // Siktemodus: set siktepunkt i staden for å plassere ball
+    if (aimMode) {
+      setAimPoint(pos);
+      setAimMode(false);
+      setMessage(`🎯 Sikteretning endra — trykk no der ballen landa`);
+      return;
+    }
 
     let distance = null;
     if (lastPos) {
@@ -780,7 +732,7 @@ function GolfShotTracker() {
       const toHoleText = toHole ? ` · ${toHole}m att` : "";
       setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
     }
-  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo, clubUsage, clubShotHistory]);
+  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo, clubUsage, clubShotHistory, aimMode]);
 
   // Green-par: hol 1&10, 2&11, ... 9&18 deler same green
   const GREEN_PAIRS = [[0,9],[1,10],[2,11],[3,12],[4,13],[5,14],[6,15],[7,16],[8,17]];
@@ -883,7 +835,7 @@ function GolfShotTracker() {
       setSheetsStatus(result.ok ? "ok" : "error");
 
     setHoles([]); setCurrentHole(1); setCurrentShots([]); setSelectedClub(null);
-    setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false); setAimPoint(null);
+    setStep("club"); setLastPos(teePositions[0]); setInHole(false); setConfirmFinish(false); setAimPoint(null); setAimMode(false);
     setIsSending(false);
     setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
   };
@@ -950,11 +902,24 @@ function GolfShotTracker() {
 
             {/* Kart — alltid synleg */}
             <div style={{ marginBottom: 10 }}>
-              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} baneDispersion={selectedClub ? (()=>{ const d = calcBaneDispersion(selectedClub); return d ? {...d, _count: (clubShotHistory[selectedClub]||[]).length} : null; })() : null} aimPoint={aimPoint} onSetAimPoint={(pos)=>{ setAimPoint(pos); setMessage(`🎯 Siktepunkt sett — ellipse rotert`); }} />
+              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} baneDispersion={selectedClub ? (()=>{ const d = calcBaneDispersion(selectedClub); return d ? {...d, _count: (clubShotHistory[selectedClub]||[]).length} : null; })() : null} aimPoint={aimPoint} />
               {step === "map" && (
                 <div style={{ textAlign: "center", marginTop: 6 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1a3a25" }}>👆 Trykk på kartet der ballen landa</div>
-                  <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Hold inne for å endre sikteretning</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: aimMode ? "#cc0000" : "#1a3a25" }}>
+                    {aimMode ? "🎯 Trykk på kartet for å velje sikteretning" : "👆 Trykk på kartet der ballen landa"}
+                  </div>
+                  <button onClick={()=>{
+                    if (aimMode) { setAimMode(false); setMessage(`Siktemodus avslutta`); }
+                    else { setAimMode(true); setMessage(`🎯 Trykk på kartet der du vil sikte`); }
+                  }} style={{
+                    marginTop: 6, padding: "8px 20px", borderRadius: 8, cursor: "pointer",
+                    background: aimMode ? "#ffebee" : (aimPoint ? "#e8f5e9" : "#fff"),
+                    border: aimMode ? "2px solid #cc0000" : (aimPoint ? "2px solid #2d8a4e" : "1px solid #ccc"),
+                    color: aimMode ? "#cc0000" : (aimPoint ? "#2d8a4e" : "#666"),
+                    fontSize: 13, fontWeight: 600,
+                  }}>
+                    {aimMode ? "✕ Avbryt sikte" : (aimPoint ? "🎯 Endre sikte (aktiv)" : "🎯 Endre sikteretning")}
+                  </button>
                 </div>
               )}
             </div>
@@ -1165,7 +1130,7 @@ function GolfShotTracker() {
             </div>
 
             <div style={{marginBottom:10}}>
-              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={null} baneDispersion={null} aimPoint={null} onSetAimPoint={null} />
+              <GolfMap currentHole={calHole} lastPos={null} onPlaceBall={()=>{}} currentShots={[]} holes={[]} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={true} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={null} baneDispersion={null} aimPoint={null} />
             </div>
 
             {(()=>{

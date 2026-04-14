@@ -703,6 +703,7 @@ function GolfShotTracker() {
 
   const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error"
   const [showPickup, setShowPickup] = useState(false);
+  const [showPenalty, setShowPenalty] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const finishRound = async () => {
@@ -745,6 +746,7 @@ function GolfShotTracker() {
             lat: s.pos ? s.pos.lat : null,
             lon: s.pos ? s.pos.lon : null,
             penalty: s.penalty || false,
+            penaltyType: s.penaltyType || null,
             pickup: s.pickup || false,
           })),
         })),
@@ -905,21 +907,15 @@ function GolfShotTracker() {
                 {/* Straffeslag og pickup */}
                 {currentShots.length > 0 && (
                   <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                    <button onClick={()=>{
-                      const lastShot = currentShots[currentShots.length - 1];
-                      const pos = lastShot?.pos || lastPos;
-                      const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true };
-                      setCurrentShots(prev => [...prev, shot]);
-                      setMessage(`⚠️ Straffeslag lagt til — no ${currentShots.length + 1} slag`);
-                    }} style={{
+                    <button onClick={()=>{setShowPenalty(v=>!v);setShowPickup(false);}} style={{
                       flex: 1, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
-                      background: "#fff", border: "2px solid #cc6600",
+                      background: showPenalty ? "#fff8e6" : "#fff", border: "2px solid #cc6600",
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     }}>
                       <span style={{ fontSize: 16 }}>⚠️</span>
                       <span style={{ fontSize: 13, color: "#cc6600", fontWeight: 700 }}>Straff +1</span>
                     </button>
-                    <button onClick={()=>setShowPickup(v=>!v)} style={{
+                    <button onClick={()=>{setShowPickup(v=>!v);setShowPenalty(false);}} style={{
                       flex: 1, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
                       background: showPickup ? "#ffebee" : "#fff", border: "2px solid #cc4444",
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -927,6 +923,40 @@ function GolfShotTracker() {
                       <span style={{ fontSize: 16 }}>🏳️</span>
                       <span style={{ fontSize: 13, color: "#cc4444", fontWeight: 700 }}>Pickup</span>
                     </button>
+                  </div>
+                )}
+
+                {/* Straffetype-val */}
+                {showPenalty && (
+                  <div style={{ background: "#fff", border: "2px solid #cc6600", borderRadius: 10, padding: "14px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#cc6600", marginBottom: 8, textAlign: "center" }}>Vel type straffeslag</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+                      {[
+                        { type: "OB", icon: "🚫", label: "OB" },
+                        { type: "Vatn", icon: "💧", label: "Vatn" },
+                        { type: "Unplayable", icon: "🚷", label: "Unplayable" },
+                        { type: "Anna", icon: "⚠️", label: "Anna" },
+                      ].map(opt => (
+                        <button key={opt.type} onClick={()=>{
+                          const lastShot = currentShots[currentShots.length - 1];
+                          const pos = lastShot?.pos || lastPos;
+                          const shot = { club: `Straff (${opt.type})`, pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true, penaltyType: opt.type };
+                          setCurrentShots(prev => [...prev, shot]);
+                          setShowPenalty(false);
+                          setMessage(`⚠️ ${opt.icon} ${opt.type}-straff lagt til — no ${currentShots.length + 1} slag`);
+                        }} style={{
+                          padding: "12px 18px", borderRadius: 8, cursor: "pointer",
+                          background: "#fff8e6", border: "2px solid #cc6600",
+                          fontSize: 14, fontWeight: 700, color: "#cc6600",
+                          display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                          minWidth: 70,
+                        }}>
+                          <span style={{ fontSize: 20 }}>{opt.icon}</span>
+                          <span>{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={()=>setShowPenalty(false)} style={{ width: "100%", marginTop: 8, padding: "10px", background: "#fff", border: "1px solid #ccc", borderRadius: 8, color: "#666", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
                   </div>
                 )}
 
@@ -956,7 +986,7 @@ function GolfShotTracker() {
                             setCurrentShots([]);
                             const nextHole = currentHole + 1;
                             setCurrentHole(nextHole);
-                            setStep("club"); setSelectedClub(null); setInHole(false); setShowPickup(false);
+                            setStep("club"); setSelectedClub(null); setInHole(false); setShowPickup(false); setShowPenalty(false);
                             setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
                             setMessage(`🏳️ Hol ${currentHole} pickup — ${opt.score} slag (${opt.label})`);
                             window.scrollTo({ top: 0, behavior: "smooth" });

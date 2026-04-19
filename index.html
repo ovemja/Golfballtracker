@@ -170,6 +170,38 @@ function scoreLabel(score, par) {
     diff === 2 ? "Dbl-bogey" : `+${diff}`;
 }
 
+// ─── GPS-posisjonering ───
+// Returnerer Promise med {lat, lon, accuracy} eller throw med forståeleg norsk feilmelding.
+// Tilpassa iOS Safari: enableHighAccuracy for GPS-chip, lang timeout for kald start,
+// maximumAge 0 for å tvinge fresh fix (viktig når du går mellom slag).
+function getCurrentGPSPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Eininga støttar ikkje GPS"));
+      return;
+    }
+    // Sjekk HTTPS — vanlegaste feilkjelde på iOS
+    if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+      reject(new Error("GPS krev HTTPS. Opne appen via ein https-adresse (t.d. GitHub Pages)"));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy }),
+      (err) => {
+        let msg;
+        switch (err.code) {
+          case 1: msg = "GPS-tilgang avslege. Innstillingar → Safari → Posisjon → «Be om tilgang»"; break;
+          case 2: msg = "Fann ikkje GPS-signal. Gå ut på ope felt og prøv igjen"; break;
+          case 3: msg = "GPS brukte for lang tid. Stå stille og prøv igjen"; break;
+          default: msg = `GPS-feil: ${err.message || "ukjend"}`;
+        }
+        reject(new Error(msg));
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  });
+}
+
 // ─── Google Sheets integrasjon ───
 // Sett inn URL-en frå Google Apps Script her:
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyemoX3aH6vuz_1ZqbC4HyjBd3zmICQnWmb1OZQV-O3Kd5wnsT2CjIhrReMmqaBVu-F/exec";
@@ -190,7 +222,7 @@ async function sendToSheets(roundData) {
 }
 
 // ─── Leaflet Map Component ───
-function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, aimPoint }) {
+function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, aimPoint, userPosition }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
@@ -211,11 +243,31 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       zoomControl: false,
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // To kartlag å velje mellom:
+    //   OSM      — viser tee, greens, bunkerar som teikna vektorar (best for slagregistrering)
+    //   Satellitt — ortofoto frå Esri World Imagery (best for orientering og læring av bana)
+    // maxNativeZoom 19 er høgaste nivået begge tenestene leverer; maxZoom held seg lik
+    // så Leaflet ikkje prøver å interpolere høgare zoom (gir berre uskarpe tiles).
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 21,
+      maxZoom: 19,
       maxNativeZoom: 19,
-    }).addTo(map);
+    });
+    const esriLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19,
+        maxNativeZoom: 19,
+      }
+    );
+    osmLayer.addTo(map); // OSM som standard — viser golfdetaljar tydelegast
+
+    L.control.layers(
+      { "Kart (OSM)": osmLayer, "Satellitt (Esri)": esriLayer },
+      null,
+      { position: 'topleft', collapsed: true }
+    ).addTo(map);
 
     L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -369,7 +421,25 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
       }
     }
 
-  }, [currentHole, currentShots, holes, teePos, greenPos, selectedClub, aimPoint]);
+    // Brukar si GPS-posisjon — blå prikk + nøyaktigheitsring (Google Maps-stil)
+    if (userPosition && !calibrateMode) {
+      // Nøyaktigheitsring (viser kor presist GPS-et trur det er)
+      if (userPosition.accuracy && userPosition.accuracy < 200) {
+        const accCircle = L.circle([userPosition.lat, userPosition.lon], {
+          radius: userPosition.accuracy,
+          color: "#4285f4", fillColor: "#4285f4", fillOpacity: 0.12,
+          weight: 1, interactive: false,
+        }).addTo(map);
+        markersRef.current.push(accCircle);
+      }
+      // Sjølve prikken
+      const userDot = L.circleMarker([userPosition.lat, userPosition.lon], {
+        radius: 8, color: "#fff", fillColor: "#4285f4", fillOpacity: 1, weight: 3, interactive: false,
+      }).addTo(map);
+      markersRef.current.push(userDot);
+    }
+
+  }, [currentHole, currentShots, holes, teePos, greenPos, selectedClub, aimPoint, userPosition]);
 
   // Sentrer kart på gjeldande hol
   useEffect(() => {
@@ -561,6 +631,8 @@ function GolfShotTracker() {
   const [calHole, setCalHole] = useState(1);
   const [calStep, setCalStep] = useState(null); // null | "tee" | "green"
   const [clubUsage, setClubUsage] = useState({}); // { "Driver": 45, "Putter": 38, ... }
+  const [userPosition, setUserPosition] = useState(null); // { lat, lon, accuracy } — siste GPS-fiks
+  const [gpsStatus, setGpsStatus] = useState("idle"); // "idle" | "fetching" | "error"
 
   // Sorterte køller basert på bruksfrekvens
   const sortedClubs = [...CLUBS].sort((a, b) => (clubUsage[b] || 0) - (clubUsage[a] || 0));
@@ -666,6 +738,27 @@ function GolfShotTracker() {
     }
   }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo, clubUsage, aimMode]);
 
+  // GPS-henting: oppdater userPosition-markør på kartet. Viss me er i "map"-steg
+  // og har vald kølle, blir punktet òg registrert som slagposisjon.
+  const handleUseGPS = useCallback(async (registerAsShot = false) => {
+    setGpsStatus("fetching");
+    setMessage("📡 Hentar GPS-posisjon (kan ta opptil 20 sek)...");
+    try {
+      const pos = await getCurrentGPSPosition();
+      setUserPosition(pos);
+      setGpsStatus("idle");
+      const accTxt = pos.accuracy ? ` (±${Math.round(pos.accuracy)}m)` : "";
+      if (registerAsShot && step === "map" && selectedClub) {
+        handlePlaceBall({ lat: pos.lat, lon: pos.lon });
+      } else {
+        setMessage(`📍 GPS-posisjon henta${accTxt}`);
+      }
+    } catch (e) {
+      setGpsStatus("error");
+      setMessage(`❌ ${e.message}`);
+    }
+  }, [step, selectedClub, handlePlaceBall]);
+
   // Green-par: hol 1&10, 2&11, ... 9&18 deler same green
   const GREEN_PAIRS = [[0,9],[1,10],[2,11],[3,12],[4,13],[5,14],[6,15],[7,16],[8,17]];
 
@@ -703,7 +796,6 @@ function GolfShotTracker() {
 
   const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error"
   const [showPickup, setShowPickup] = useState(false);
-  const [showPenalty, setShowPenalty] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const finishRound = async () => {
@@ -746,7 +838,6 @@ function GolfShotTracker() {
             lat: s.pos ? s.pos.lat : null,
             lon: s.pos ? s.pos.lon : null,
             penalty: s.penalty || false,
-            penaltyType: s.penaltyType || null,
             pickup: s.pickup || false,
           })),
         })),
@@ -836,11 +927,40 @@ function GolfShotTracker() {
 
             {/* Kart — alltid synleg */}
             <div style={{ marginBottom: 10 }}>
-              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} aimPoint={aimPoint} />
+              <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} aimPoint={aimPoint} userPosition={userPosition} />
+
+              {/* GPS-knapp under kartet — alltid synleg i spelemodus.
+                  I "map"-steg brukar han GPS-en DIREKTE som slagposisjon.
+                  Elles berre viser kvar du er på kartet. */}
+              {!calibrateMode && (
+                <button
+                  onClick={()=>handleUseGPS(step === "map" && !!selectedClub)}
+                  disabled={gpsStatus === "fetching"}
+                  style={{
+                    width: "100%", marginTop: 6, padding: "14px",
+                    borderRadius: 10, cursor: gpsStatus === "fetching" ? "wait" : "pointer",
+                    background: gpsStatus === "fetching" ? "#f0f0f0"
+                              : (step === "map" && selectedClub) ? "#1a3a25" : "#fff",
+                    border: "2px solid #1a3a25",
+                    color: (step === "map" && selectedClub) ? "#fff" : "#1a3a25",
+                    fontSize: 15, fontWeight: 700,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}
+                >
+                  {gpsStatus === "fetching" ? (
+                    <>📡 Hentar GPS...</>
+                  ) : (step === "map" && selectedClub) ? (
+                    <>📍 Bruk min GPS som ballposisjon</>
+                  ) : (
+                    <>📍 Vis meg på kartet</>
+                  )}
+                </button>
+              )}
+
               {step === "map" && (
                 <div style={{ textAlign: "center", marginTop: 6 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: aimMode ? "#cc0000" : "#1a3a25" }}>
-                    {aimMode ? "🎯 Trykk på kartet for å velje sikteretning" : "👆 Trykk på kartet der ballen landa"}
+                    {aimMode ? "🎯 Trykk på kartet for å velje sikteretning" : "eller trykk på kartet der ballen landa"}
                   </div>
                   <button onClick={()=>{
                     if (aimMode) { setAimMode(false); setMessage(`Siktemodus avslutta`); }
@@ -907,15 +1027,21 @@ function GolfShotTracker() {
                 {/* Straffeslag og pickup */}
                 {currentShots.length > 0 && (
                   <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                    <button onClick={()=>{setShowPenalty(v=>!v);setShowPickup(false);}} style={{
+                    <button onClick={()=>{
+                      const lastShot = currentShots[currentShots.length - 1];
+                      const pos = lastShot?.pos || lastPos;
+                      const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true };
+                      setCurrentShots(prev => [...prev, shot]);
+                      setMessage(`⚠️ Straffeslag lagt til — no ${currentShots.length + 1} slag`);
+                    }} style={{
                       flex: 1, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
-                      background: showPenalty ? "#fff8e6" : "#fff", border: "2px solid #cc6600",
+                      background: "#fff", border: "2px solid #cc6600",
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     }}>
                       <span style={{ fontSize: 16 }}>⚠️</span>
                       <span style={{ fontSize: 13, color: "#cc6600", fontWeight: 700 }}>Straff +1</span>
                     </button>
-                    <button onClick={()=>{setShowPickup(v=>!v);setShowPenalty(false);}} style={{
+                    <button onClick={()=>setShowPickup(v=>!v)} style={{
                       flex: 1, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
                       background: showPickup ? "#ffebee" : "#fff", border: "2px solid #cc4444",
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -923,40 +1049,6 @@ function GolfShotTracker() {
                       <span style={{ fontSize: 16 }}>🏳️</span>
                       <span style={{ fontSize: 13, color: "#cc4444", fontWeight: 700 }}>Pickup</span>
                     </button>
-                  </div>
-                )}
-
-                {/* Straffetype-val */}
-                {showPenalty && (
-                  <div style={{ background: "#fff", border: "2px solid #cc6600", borderRadius: 10, padding: "14px", marginBottom: 8 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#cc6600", marginBottom: 8, textAlign: "center" }}>Vel type straffeslag</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-                      {[
-                        { type: "OB", icon: "🚫", label: "OB" },
-                        { type: "Vatn", icon: "💧", label: "Vatn" },
-                        { type: "Unplayable", icon: "🚷", label: "Unplayable" },
-                        { type: "Anna", icon: "⚠️", label: "Anna" },
-                      ].map(opt => (
-                        <button key={opt.type} onClick={()=>{
-                          const lastShot = currentShots[currentShots.length - 1];
-                          const pos = lastShot?.pos || lastPos;
-                          const shot = { club: `Straff (${opt.type})`, pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true, penaltyType: opt.type };
-                          setCurrentShots(prev => [...prev, shot]);
-                          setShowPenalty(false);
-                          setMessage(`⚠️ ${opt.icon} ${opt.type}-straff lagt til — no ${currentShots.length + 1} slag`);
-                        }} style={{
-                          padding: "12px 18px", borderRadius: 8, cursor: "pointer",
-                          background: "#fff8e6", border: "2px solid #cc6600",
-                          fontSize: 14, fontWeight: 700, color: "#cc6600",
-                          display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                          minWidth: 70,
-                        }}>
-                          <span style={{ fontSize: 20 }}>{opt.icon}</span>
-                          <span>{opt.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <button onClick={()=>setShowPenalty(false)} style={{ width: "100%", marginTop: 8, padding: "10px", background: "#fff", border: "1px solid #ccc", borderRadius: 8, color: "#666", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
                   </div>
                 )}
 
@@ -986,7 +1078,7 @@ function GolfShotTracker() {
                             setCurrentShots([]);
                             const nextHole = currentHole + 1;
                             setCurrentHole(nextHole);
-                            setStep("club"); setSelectedClub(null); setInHole(false); setShowPickup(false); setShowPenalty(false);
+                            setStep("club"); setSelectedClub(null); setInHole(false); setShowPickup(false);
                             setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
                             setMessage(`🏳️ Hol ${currentHole} pickup — ${opt.score} slag (${opt.label})`);
                             window.scrollTo({ top: 0, behavior: "smooth" });

@@ -929,33 +929,30 @@ function GolfShotTracker() {
             <div style={{ marginBottom: 10 }}>
               <GolfMap currentHole={view==="calibrate"?calHole:currentHole} lastPos={lastPos} onPlaceBall={handlePlaceBall} currentShots={currentShots} holes={holes} teePositions={teePositions} greenPositions={greenPositions} calibrateMode={view==="calibrate"} calibrateStep={calStep} onCalibrateTap={handleCalibrateTap} selectedClub={selectedClub} aimPoint={aimPoint} userPosition={userPosition} />
 
-              {/* GPS-knapp under kartet — alltid synleg i spelemodus.
-                  I "map"-steg brukar han GPS-en DIREKTE som slagposisjon.
-                  Elles berre viser kvar du er på kartet. */}
-              {!calibrateMode && (
-                <button
-                  onClick={()=>handleUseGPS(step === "map" && !!selectedClub)}
-                  disabled={gpsStatus === "fetching"}
-                  style={{
-                    width: "100%", marginTop: 6, padding: "14px",
-                    borderRadius: 10, cursor: gpsStatus === "fetching" ? "wait" : "pointer",
-                    background: gpsStatus === "fetching" ? "#f0f0f0"
-                              : (step === "map" && selectedClub) ? "#1a3a25" : "#fff",
-                    border: "2px solid #1a3a25",
-                    color: (step === "map" && selectedClub) ? "#fff" : "#1a3a25",
-                    fontSize: 15, fontWeight: 700,
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  }}
-                >
-                  {gpsStatus === "fetching" ? (
-                    <>📡 Hentar GPS...</>
-                  ) : (step === "map" && selectedClub) ? (
-                    <>📍 Bruk min GPS som ballposisjon</>
-                  ) : (
-                    <>📍 Vis meg på kartet</>
-                  )}
-                </button>
-              )}
+              {/* GPS-knapp under kartet. I "map"-steg med vald kølle brukar han
+                  GPS-en DIREKTE som slagposisjon. Elles berre viser kvar du er. */}
+              <button
+                onClick={()=>handleUseGPS(step === "map" && !!selectedClub)}
+                disabled={gpsStatus === "fetching"}
+                style={{
+                  width: "100%", marginTop: 6, padding: "14px",
+                  borderRadius: 10, cursor: gpsStatus === "fetching" ? "wait" : "pointer",
+                  background: gpsStatus === "fetching" ? "#f0f0f0"
+                            : (step === "map" && selectedClub) ? "#1a3a25" : "#fff",
+                  border: "2px solid #1a3a25",
+                  color: (step === "map" && selectedClub) ? "#fff" : "#1a3a25",
+                  fontSize: 15, fontWeight: 700,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                {gpsStatus === "fetching" ? (
+                  <>📡 Hentar GPS...</>
+                ) : (step === "map" && selectedClub) ? (
+                  <>📍 Bruk min GPS som ballposisjon</>
+                ) : (
+                  <>📍 Vis meg på kartet</>
+                )}
+              </button>
 
               {step === "map" && (
                 <div style={{ textAlign: "center", marginTop: 6 }}>

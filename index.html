@@ -133,26 +133,49 @@ const DEFAULT_TEE_POSITIONS = [
   { lat: 61.4848, lon: 6.084791 }
 ];
 
-// Green-posisjonar (estimerte frå tee-par og avstandar)
+// Green-posisjonar — kalibrerte 22.04.2026 mot Norge i bilder (ortofoto).
+// 9-hols bane med 18 utslag: hol 1/10, 2/11, 3/12, ..., 9/18 deler same green.
+// Verdiane er lesne av frå greenens senter i Kartverkets ortofoto-teneste.
+// Kartverket bekreftar terreng = "Golfbane" for alle 9 punkt.
+// Estimert nøyaktigheit ±2-3m. For betre presisjon: gå fysisk til kvar
+// green med GPS og oppdater verdiane.
 const DEFAULT_GREEN_POSITIONS = [
-  { lat: 61.485167, lon: 6.078952 },
-  { lat: 61.484168, lon: 6.081619 },
-  { lat: 61.482801, lon: 6.080389 },
-  { lat: 61.485412, lon: 6.085315 },
-  { lat: 61.485722, lon: 6.08586 },
-  { lat: 61.480091, lon: 6.07574 },
-  { lat: 61.485088, lon: 6.084378 },
-  { lat: 61.484657, lon: 6.081337 },
-  { lat: 61.483183, lon: 6.088661 },
-  { lat: 61.485167, lon: 6.078952 },
-  { lat: 61.484168, lon: 6.081619 },
-  { lat: 61.482801, lon: 6.080389 },
-  { lat: 61.485412, lon: 6.085315 },
-  { lat: 61.485722, lon: 6.08586 },
-  { lat: 61.480091, lon: 6.07574 },
-  { lat: 61.485088, lon: 6.084378 },
-  { lat: 61.484657, lon: 6.081337 },
-  { lat: 61.483183, lon: 6.088661 }
+  // Hol 1–9
+  { lat: 61.48612, lon: 6.07634 },  // Green 1/10
+  { lat: 61.48355, lon: 6.0787  },  // Green 2/11
+  { lat: 61.48515, lon: 6.07906 },  // Green 3/12
+  { lat: 61.48461, lon: 6.08472 },  // Green 4/13
+  { lat: 61.48246, lon: 6.0803  },  // Green 5/14
+  { lat: 61.48388, lon: 6.0849  },  // Green 6/15
+  { lat: 61.48313, lon: 6.08329 },  // Green 7/16
+  { lat: 61.48407, lon: 6.08314 },  // Green 8/17
+  { lat: 61.48635, lon: 6.08128 },  // Green 9/18
+  // Hol 10–18 (same greens som 1–9)
+  { lat: 61.48612, lon: 6.07634 },  // Green 1/10
+  { lat: 61.48355, lon: 6.0787  },  // Green 2/11
+  { lat: 61.48515, lon: 6.07906 },  // Green 3/12
+  { lat: 61.48461, lon: 6.08472 },  // Green 4/13
+  { lat: 61.48246, lon: 6.0803  },  // Green 5/14
+  { lat: 61.48388, lon: 6.0849  },  // Green 6/15
+  { lat: 61.48313, lon: 6.08329 },  // Green 7/16
+  { lat: 61.48407, lon: 6.08314 },  // Green 8/17
+  { lat: 61.48635, lon: 6.08128 },  // Green 9/18
+];
+
+// Høgdedata (meter over havet) for tee og green — henta 22.04.2026 frå
+// Kartverkets høgde-API (https://ws.geonorge.no/hoydedata/v1/punkt) basert
+// på 1m-laserskanna terrengmodell (DTM1, ±0,2m vertikal nøyaktigheit).
+// Indeks tilsvarar holnummer minus 1.
+//
+// Ikkje brukt i UI enno. Kan brukast for å berekne "spel-avstand"
+// (geografisk avstand justert for høgdeskilnad: ca. +1m per +1m oppover).
+const TEE_ELEVATIONS = [
+  177.4, 175.8, 182.7, 183.6, 194.2, 201.0, 195.1, 196.1, 195.1,  // Tee  1–9
+  180.6, 175.5, 181.7, 183.6, 194.2, 202.2, 195.2, 196.1, 192.7,  // Tee 10–18
+];
+const GREEN_ELEVATIONS = [
+  176.5, 181.9, 179.1, 188.1, 190.3, 196.7, 200.7, 194.3, 182.7,  // Green hol  1–9
+  176.5, 181.9, 179.1, 188.1, 190.3, 196.7, 200.7, 194.3, 182.7,  // Green hol 10–18
 ];
 
 const MAP_COLORS = [

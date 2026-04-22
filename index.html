@@ -45,20 +45,31 @@ const COURSE_DATA = [
 ];
 const TOTAL_PAR = COURSE_DATA.reduce((s, h) => s + h.par, 0);
 
+// Køller i aktiv bruk, matchar Trackman My Bag-mapping 22.04.2026.
+// Merk: "PW" = Honma #10 (46,5°), "SW" = Honma S (56°).
+// Honma #3, #4, #5, #7 (tidlegare), #11 og 3-wood er i bag men ikkje aktive.
 const CLUBS = [
-  "Driver", "3-Wood", "5-Wood", "Hybrid",
-  "3-Iron", "4-Iron", "5-Iron", "6-Iron", "7-Iron", "8-Iron", "9-Iron",
-  "PW", "GW", "SW", "LW", "Putter"
+  "Driver", "5-Wood",
+  "6i", "7i", "8i", "9i",
+  "PW", "SW", "Putter"
 ];
 
-// Trackman slagmønster-data (carry i meter, side i meter, negativ = venstre)
+// Dispersjonsdata per kølle. Kjelder:
+//   - Carry-snitt: Trackman My Bag 22.04.2026 (akkumulert snitt, mest pålitelege tal)
+//   - Carry/side std.avvik: Combine-test 22.04.2026 per target
+//   - Side-snitt: Combine-test 22.04.2026 (negativ = venstre, positiv = høgre)
+// 5-Wood-dispersjon er estimat — Combine-data for 125–165m var forureina
+// av varierande kølle-val. Skal oppdaterast ved neste rein 5w-måling.
+// 9i carryStd er justert ned frå rå 27,9 (eitt 0,3m-mishit dominerte) til 10.
 const CLUB_DISPERSION = {
-  "Driver":  { carry: 139.9, carryStd: 14.3, side: -5.9, sideStd: 17.0 },
-  "5-Wood":  { carry: 123.1, carryStd: 10.4, side: 1.6,  sideStd: 11.5 },
-  "6-Iron":  { carry: 90.2,  carryStd: 13.5, side: -2.8, sideStd: 6.7 },
-  "8-Iron":  { carry: 84.5,  carryStd: 13.8, side: -3.5, sideStd: 3.0 },
-  "9-Iron":  { carry: 71.8,  carryStd: 8.4,  side: -7.1, sideStd: 6.1 },
-  "LW":      { carry: 60.8,  carryStd: 9.6,  side: -0.5, sideStd: 7.6 },
+  "Driver": { carry: 152, carryStd: 22,   side:  8.8, sideStd: 18   },
+  "5-Wood": { carry: 122, carryStd: 15,   side:  0,   sideStd: 12   }, // estimat
+  "6i":     { carry: 105, carryStd:  9.1, side: -0.6, sideStd:  9.4 },
+  "7i":     { carry:  93, carryStd:  4.6, side: -7.0, sideStd:  6.2 }, // venstredrag!
+  "8i":     { carry:  86, carryStd: 10.1, side:  4.9, sideStd:  7.5 },
+  "9i":     { carry:  76, carryStd: 10,   side: -0.1, sideStd:  4.0 }, // std justert
+  "PW":     { carry:  62, carryStd:  6.0, side: -3.6, sideStd:  3.6 },
+  "SW":     { carry:  49, carryStd:  7.7, side:  0.2, sideStd:  3.6 },
 };
 
 // Rekn ut punkt langs ein retning frå ei startposisjon
@@ -642,7 +653,37 @@ function GolfShotTracker() {
     try { const r = localStorage.getItem("golf-reports"); if (r) setSavedReports(JSON.parse(r)); } catch(e){}
     try { const t = localStorage.getItem("golf-tee-pos"); if (t) setTeePositions(JSON.parse(t)); } catch(e){}
     try { const g = localStorage.getItem("golf-green-pos"); if (g) setGreenPositions(JSON.parse(g)); } catch(e){}
-    try { const c = localStorage.getItem("golf-club-usage"); if (c) setClubUsage(JSON.parse(c)); } catch(e){}
+    // Les bruksstatistikk og migrer gamle kølle-namn til nye.
+    // Endra 22.04.2026: LW → PW (Honma #10 er eigentleg PW), og fjern
+    // bruksstatistikk for køller som ikkje lenger finst i CLUBS-arrayet.
+    try {
+      const c = localStorage.getItem("golf-club-usage");
+      if (c) {
+        const oldUsage = JSON.parse(c);
+        const newUsage = {};
+        const clubMigrationMap = {
+          "LW": "PW",        // Honma #10 var feilmerkt som LW
+          "6-Iron": "6i",
+          "7-Iron": "7i",
+          "8-Iron": "8i",
+          "9-Iron": "9i",
+        };
+        let migrated = false;
+        for (const [oldKey, count] of Object.entries(oldUsage)) {
+          const newKey = clubMigrationMap[oldKey] || oldKey;
+          if (CLUBS.includes(newKey)) {
+            newUsage[newKey] = (newUsage[newKey] || 0) + count;
+            if (newKey !== oldKey) migrated = true;
+          } else {
+            migrated = true; // Kølle droppa (t.d. 3-Iron, GW)
+          }
+        }
+        setClubUsage(newUsage);
+        if (migrated) {
+          try { localStorage.setItem("golf-club-usage", JSON.stringify(newUsage)); } catch(e){}
+        }
+      }
+    } catch(e){}
     try {
       const r = localStorage.getItem("golf-active-round");
       if (r) {

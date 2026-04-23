@@ -482,7 +482,39 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
     map.setView([teePos.lat, teePos.lon], 17, { animate: true });
   }, [currentHole, teePos]);
 
-  return <div ref={mapRef} style={{ width: "100%", height: 350, borderRadius: 12, border: "2px solid #1a3a25" }} />;
+  // GPS-statusindikator. Tre tilstandar basert på userPosition:
+  //   ingen fiks (raud) — watchPosition har ikkje gitt resultat enno
+  //   dårleg fiks (gul) — accuracy > 15m (celletårn/WiFi, ikkje GPS)
+  //   god fiks (grøn)  — accuracy <= 15m (ekte GPS-fiks)
+  // Vis berre i spele-modus, ikkje i kalibrerings-modus.
+  let gpsIndicator = null;
+  if (!calibrateMode) {
+    let bg, fg, border, text;
+    if (!userPosition) {
+      bg = "#fee"; fg = "#c33"; border = "#c33"; text = "🔴 GPS: ventar";
+    } else if (userPosition.accuracy > 15) {
+      bg = "#ffeecc"; fg = "#a66500"; border = "#e6a800";
+      text = `🟡 GPS: ±${Math.round(userPosition.accuracy)}m`;
+    } else {
+      bg = "#e8f5e9"; fg = "#1a3a25"; border = "#4a8c5c";
+      text = `🟢 GPS: ±${Math.round(userPosition.accuracy)}m`;
+    }
+    gpsIndicator = (
+      <div style={{
+        position: "absolute", bottom: 10, left: 10, zIndex: 1000,
+        padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+        background: bg, color: fg, border: `1.5px solid ${border}`,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.2)", pointerEvents: "none",
+      }}>{text}</div>
+    );
+  }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <div ref={mapRef} style={{ width: "100%", height: 350, borderRadius: 12, border: "2px solid #1a3a25" }} />
+      {gpsIndicator}
+    </div>
+  );
 }
 
 // ─── Report Builder ───
@@ -721,6 +753,39 @@ function GolfShotTracker() {
       }
     } catch(e){}
   }, []);
+
+  // Kontinuerleg GPS-sporing i spele-modus. Startar watchPosition slik at
+  // GPS-brikka varmar seg opp mens du går til tee og vel kølle. Stopp når
+  // du går til kalibrering eller rapportar. Dette løyser "første slag er
+  // upåliteleg"-problemet ute.
+  //
+  // Safari iOS kan suspendere watchPosition når skjermen slår seg av.
+  // Viss det skjer, er siste fiks framleis tilgjengeleg, men ikkje oppdatert.
+  useEffect(() => {
+    if (view !== "play") return;
+    if (!navigator.geolocation) return;
+    if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (p) => {
+        setUserPosition({
+          lat: p.coords.latitude,
+          lon: p.coords.longitude,
+          accuracy: p.coords.accuracy,
+        });
+      },
+      (err) => {
+        // Stille feil — brukaren kan framleis bruke den manuelle GPS-knappen
+        // som fallback. Logg i konsoll for debugging.
+        console.warn("watchPosition error:", err.code, err.message);
+      },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 2000 }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [view]);
 
   // Lagre aktiv runde
   useEffect(() => {

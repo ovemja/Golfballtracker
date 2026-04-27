@@ -1115,24 +1115,16 @@ function GolfShotTracker() {
                   Slag {currentShots.length+1} — Vel kølle
                 </div>
 
-                {/* Ballen er i holet — avsluttar holet direkte */}
+                {/* Ballen er i holet — markerer siste slag som hole-out og avsluttar holet */}
                 {currentShots.length > 0 && <button onClick={()=>{
-                  // Bruk green-posisjon som siste ballplassering
-                  const pos = greenPos || lastPos;
-                  if (!pos) return;
-                  let distance = null;
-                  if (lastPos && pos) {
-                    distance = Math.round(haversineDistance(lastPos.lat, lastPos.lon, pos.lat, pos.lon));
-                    if (distance < 1) distance = null;
-                  }
-                  // Legg til siste slag (putt i holet) med valt kølle eller "Putter"
-                  const club = "Putter";
-                  const shot = { club, pos, distance, toHole: 0, shotNumber: currentShots.length + 1 };
-                  const updatedShots = [...currentShots, shot];
-                  // Oppdater kølle-bruk
-                  const newUsage = { ...clubUsage, [club]: (clubUsage[club] || 0) + 1 };
-                  setClubUsage(newUsage);
-                  try { localStorage.setItem("golf-club-usage", JSON.stringify(newUsage)); } catch(e){}
+                  // Marker siste registrerte slag som hole-out (toHole: 0).
+                  // Ingen nytt slag blir lagt til — siste slag er det som førte ballen i holet,
+                  // anten det var ein putt, ein chip med SW, eller eit langt jern.
+                  // Bruk-tellaren for sist valde kølle er allereie oppdatert då slaget
+                  // vart registrert, så vi rører ikkje clubUsage her.
+                  const updatedShots = [...currentShots];
+                  const lastIdx = updatedShots.length - 1;
+                  updatedShots[lastIdx] = { ...updatedShots[lastIdx], toHole: 0 };
                   const score = updatedShots.length;
                   const diff = score - holeInfo.par;
                   const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;

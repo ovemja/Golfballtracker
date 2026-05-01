@@ -928,6 +928,7 @@ function GolfShotTracker() {
 
   const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error"
   const [showPickup, setShowPickup] = useState(false);
+  const [showPuttPicker, setShowPuttPicker] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const finishRound = async () => {
@@ -1115,8 +1116,76 @@ function GolfShotTracker() {
                   Slag {currentShots.length+1} — Vel kølle
                 </div>
 
-                {/* Ballen er i holet — markerer siste slag som hole-out og avsluttar holet */}
-                {currentShots.length > 0 && <button onClick={()=>{
+                {/* På green — tel puttar.
+                    Hovudvegen ut av holet for vanleg spel. Ingen GPS, ingen kart-trykk —
+                    berre tal-knappar 1, 2, 3 eller 4 puttar.
+                    Puttane blir lagt til som syntetiske slag i currentShots med kølle="Putt"
+                    og putt:true-flagg, slik at score-telling fungerer som vanleg, men puttar
+                    kan filtrerast ut i statistikk seinare. */}
+                {currentShots.length > 0 && !showPuttPicker && <button onClick={()=>{
+                  setShowPuttPicker(true);
+                  setShowPickup(false);
+                  setMessage("");
+                }} style={{
+                  width: "100%", padding: "16px 16px", marginBottom: 8,
+                  background: "#e8f5e9", border: "3px solid #4a8c5c",
+                  borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                }}>
+                  <span style={{ width: 30, height: 30, borderRadius: "50%", background: "#4a8c5c", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⛳</span>
+                  <span style={{ fontSize: 16, color: "#1a3a25", fontWeight: 700 }}>På green — tel puttar</span>
+                </button>}
+
+                {/* Putt-velgar (1, 2, 3, 4) */}
+                {showPuttPicker && (
+                  <div style={{ background: "#fff", border: "3px solid #4a8c5c", borderRadius: 10, padding: "14px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1a3a25", marginBottom: 10, textAlign: "center" }}>Kor mange puttar?</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                      {[1, 2, 3, 4].map(n => (
+                        <button key={n} onClick={()=>{
+                          // Legg til n puttar som syntetiske slag. Siste putt får toHole: 0.
+                          // Pos = green-posisjon (best mogleg estimat — ingen GPS-trykk).
+                          const pos = greenPos || lastPos;
+                          const newPutts = [];
+                          for (let i = 0; i < n; i++) {
+                            newPutts.push({
+                              club: "Putt",
+                              pos,
+                              distance: null,
+                              toHole: i === n - 1 ? 0 : null,
+                              shotNumber: currentShots.length + i + 1,
+                              putt: true,
+                            });
+                          }
+                          const updatedShots = [...currentShots, ...newPutts];
+                          const score = updatedShots.length;
+                          const diff = score - holeInfo.par;
+                          const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;
+                          setHoles(prev => [...prev, { hole: currentHole, shots: updatedShots }]);
+                          setCurrentShots([]);
+                          setShowPuttPicker(false);
+                          const nextHole = currentHole + 1;
+                          setCurrentHole(nextHole);
+                          setStep("club"); setSelectedClub(null); setInHole(false);
+                          setLastPos(nextHole <= 18 ? teePositions[nextHole-1] : null);
+                          setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag (${n}-putt) — ${label}`);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }} style={{
+                          padding: "20px 6px", borderRadius: 10, cursor: "pointer",
+                          background: "#fff", border: "2px solid #4a8c5c",
+                          color: "#1a3a25", fontSize: 22, fontWeight: 700,
+                        }}>{n}</button>
+                      ))}
+                    </div>
+                    <button onClick={()=>{ setShowPuttPicker(false); }} style={{
+                      width: "100%", marginTop: 10, padding: "8px",
+                      background: "#fff", border: "1px solid #999", borderRadius: 8,
+                      color: "#666", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                    }}>Avbryt</button>
+                  </div>
+                )}
+
+                {/* Ballen er i holet — markerer siste slag som hole-out (chip-in, hole-out frå avstand) */}
+                {currentShots.length > 0 && !showPuttPicker && <button onClick={()=>{
                   // Marker siste registrerte slag som hole-out (toHole: 0).
                   // Ingen nytt slag blir lagt til — siste slag er det som førte ballen i holet,
                   // anten det var ein putt, ein chip med SW, eller eit langt jern.
@@ -1141,8 +1210,8 @@ function GolfShotTracker() {
                   background: "#fff3cd", border: "3px solid #e6a800",
                   borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
                 }}>
-                  <span style={{ width: 30, height: 30, borderRadius: "50%", background: "#e6a800", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⛳</span>
-                  <span style={{ fontSize: 16, color: "#8a6500", fontWeight: 700 }}>Ballen er i holet — avslutt</span>
+                  <span style={{ width: 30, height: 30, borderRadius: "50%", background: "#e6a800", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🎯</span>
+                  <span style={{ fontSize: 14, color: "#8a6500", fontWeight: 700 }}>Siste slag gjekk i holet (chip-in)</span>
                 </button>}
 
                 {/* Straffeslag og pickup */}

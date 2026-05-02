@@ -111,8 +111,13 @@ function generateEllipse(fromLat, fromLon, bearingRad, carry, carryStd, sideBias
   return points;
 }
 
-// Tee-posisjonar (GPS-oppmålte, konvertert frå EPSG:25833)
-const DEFAULT_TEE_POSITIONS = [
+// Tee-posisjonar — kalibrerte 22.04.2026 mot Norge i bilder (ortofoto).
+// Sunnfjord GK har separate tee-områder for gul og raud per hol.
+// Brukaren vel tee-farge i UI-et (typisk same farge heile runden).
+// Estimert nøyaktigheit ±2-3m. Ingen runtime-kalibrering — verdiane er
+// faste konstantar. For oppdatering: rediger arrayet direkte.
+
+const TEE_POSITIONS_YELLOW = [
   { lat: 61.487113, lon: 6.079887 },
   { lat: 61.485851, lon: 6.075345 },
   { lat: 61.483856, lon: 6.079363 },
@@ -121,16 +126,37 @@ const DEFAULT_TEE_POSITIONS = [
   { lat: 61.481799, lon: 6.080841 },
   { lat: 61.484164, lon: 6.083977 },
   { lat: 61.482616, lon: 6.081337 },
-  { lat: 61.484767, lon: 6.08487 },
+  { lat: 61.484767, lon: 6.08487  },
   { lat: 61.486882, lon: 6.079776 },
   { lat: 61.485685, lon: 6.075964 },
-  { lat: 61.484, lon: 6.079223 },
+  { lat: 61.484,    lon: 6.079223 },
   { lat: 61.483718, lon: 6.079842 },
   { lat: 61.484394, lon: 6.082539 },
-  { lat: 61.48195, lon: 6.081292 },
+  { lat: 61.48195,  lon: 6.081292 },
   { lat: 61.484058, lon: 6.083931 },
   { lat: 61.482616, lon: 6.081337 },
-  { lat: 61.4848, lon: 6.084791 }
+  { lat: 61.4848,   lon: 6.084791 },
+];
+
+const TEE_POSITIONS_RED = [
+  { lat: 61.48684, lon: 6.07938 },
+  { lat: 61.48568, lon: 6.07599 },
+  { lat: 61.48425, lon: 6.07955 },
+  { lat: 61.48385, lon: 6.07966 },
+  { lat: 61.48404, lon: 6.08213 },
+  { lat: 61.48211, lon: 6.08176 },
+  { lat: 61.48381, lon: 6.08384 },
+  { lat: 61.48275, lon: 6.08168 },
+  { lat: 61.48497, lon: 6.08402 },
+  { lat: 61.48699, lon: 6.07948 },
+  { lat: 61.48554, lon: 6.0768  },
+  { lat: 61.48402, lon: 6.07939 },
+  { lat: 61.48401, lon: 6.08019 },
+  { lat: 61.48441, lon: 6.0826  },
+  { lat: 61.48192, lon: 6.08126 },
+  { lat: 61.48416, lon: 6.08399 },
+  { lat: 61.48261, lon: 6.08136 },
+  { lat: 61.48477, lon: 6.08487 },
 ];
 
 // Green-posisjonar — kalibrerte 22.04.2026 mot Norge i bilder (ortofoto).
@@ -162,16 +188,20 @@ const DEFAULT_GREEN_POSITIONS = [
   { lat: 61.48635, lon: 6.08128 },  // Green 9/18
 ];
 
-// Høgdedata (meter over havet) for tee og green — henta 22.04.2026 frå
-// Kartverkets høgde-API (https://ws.geonorge.no/hoydedata/v1/punkt) basert
-// på 1m-laserskanna terrengmodell (DTM1, ±0,2m vertikal nøyaktigheit).
+// Høgdedata (meter over havet) for tee og green — henta 22.04.2026 og
+// 02.05.2026 frå Kartverkets høgde-API (https://ws.geonorge.no/hoydedata/v1/punkt)
+// basert på 1m-laserskanna terrengmodell (DTM1, ±0,2m vertikal nøyaktigheit).
 // Indeks tilsvarar holnummer minus 1.
 //
 // Ikkje brukt i UI enno. Kan brukast for å berekne "spel-avstand"
 // (geografisk avstand justert for høgdeskilnad: ca. +1m per +1m oppover).
-const TEE_ELEVATIONS = [
-  177.4, 175.8, 182.7, 183.6, 194.2, 201.0, 195.1, 196.1, 195.1,  // Tee  1–9
-  180.6, 175.5, 181.7, 183.6, 194.2, 202.2, 195.2, 196.1, 192.7,  // Tee 10–18
+const TEE_ELEVATIONS_YELLOW = [
+  177.4, 175.8, 182.7, 183.6, 194.2, 201.0, 195.1, 196.1, 195.1,  // Tee gul  1–9
+  180.6, 175.5, 181.7, 183.6, 194.2, 202.2, 195.2, 196.1, 192.7,  // Tee gul 10–18
+];
+const TEE_ELEVATIONS_RED = [
+  177.6, 175.4, 181.5, 182.8, 193.2, 202.2, 197.1, 195.8, 185.3,  // Tee raud  1–9
+  176.9, 175.4, 182.0, 184.7, 194.3, 202.4, 195.1, 196.2, 195.1,  // Tee raud 10–18
 ];
 const GREEN_ELEVATIONS = [
   176.5, 181.9, 179.1, 188.1, 190.3, 196.7, 200.7, 194.3, 182.7,  // Green hol  1–9
@@ -685,20 +715,23 @@ function GolfShotTracker() {
   const [step, setStep] = useState("club"); // "club" | "map"
   const [message, setMessage] = useState("");
   const [view, setView] = useState("play");
-  const [tee, setTee] = useState("yellow");
-  const [lastPos, setLastPos] = useState(DEFAULT_TEE_POSITIONS[0]);
+  const [tee, setTee] = useState("red"); // Brukar startar med raud tee (nybegynnar)
+  const [lastPos, setLastPos] = useState(TEE_POSITIONS_RED[0]);
   const [inHole, setInHole] = useState(false);
   const [aimPoint, setAimPoint] = useState(null);
   const [aimMode, setAimMode] = useState(false); // true = neste trykk set siktepunkt // Manuelt siktepunkt for ellipse
   const [savedReports, setSavedReports] = useState([]);
   const [confirmFinish, setConfirmFinish] = useState(false);
-  const [teePositions, setTeePositions] = useState([...DEFAULT_TEE_POSITIONS]);
   const [greenPositions, setGreenPositions] = useState([...DEFAULT_GREEN_POSITIONS]);
   const [calHole, setCalHole] = useState(1);
-  const [calStep, setCalStep] = useState(null); // null | "tee" | "green"
+  const [calStep, setCalStep] = useState(null); // null | "green" (tee-kalibrering fjerna 02.05.2026)
   const [clubUsage, setClubUsage] = useState({}); // { "Driver": 45, "Putter": 38, ... }
   const [userPosition, setUserPosition] = useState(null); // { lat, lon, accuracy } — siste GPS-fiks
   const [gpsStatus, setGpsStatus] = useState("idle"); // "idle" | "fetching" | "error"
+
+  // Tee-posisjonar er no eit utleda val basert på vald tee-farge.
+  // Begge sett er hardkoda konstantar (ortofoto-kalibrerte), ingen runtime-endring.
+  const teePositions = tee === "yellow" ? TEE_POSITIONS_YELLOW : TEE_POSITIONS_RED;
 
   // Køller i fast logisk rekkjefølge (lengst → kortast, putter til slutt).
   // Tidlegare sortert etter bruksfrekvens, men då endra rekkjefølga seg over
@@ -709,7 +742,9 @@ function GolfShotTracker() {
   // Last rapportar, aktiv runde og kalibrerte posisjonar frå localStorage
   useEffect(() => {
     try { const r = localStorage.getItem("golf-reports"); if (r) setSavedReports(JSON.parse(r)); } catch(e){}
-    try { const t = localStorage.getItem("golf-tee-pos"); if (t) setTeePositions(JSON.parse(t)); } catch(e){}
+    // Migrering 02.05.2026: tee-kalibrering er fjerna. Slett gammal localStorage-data
+    // slik at ho ikkje ligg og bruker plass utan formål.
+    try { localStorage.removeItem("golf-tee-pos"); } catch(e){}
     try { const g = localStorage.getItem("golf-green-pos"); if (g) setGreenPositions(JSON.parse(g)); } catch(e){}
     // Les bruksstatistikk og migrer gamle kølle-namn til nye.
     // Endra 22.04.2026: LW → PW (Honma #10 er eigentleg PW), og fjern
@@ -911,9 +946,8 @@ function GolfShotTracker() {
   }, [calStep, calHole, greenPositions]);
 
   const resetCalibration = () => {
-    setTeePositions([...DEFAULT_TEE_POSITIONS]);
     setGreenPositions([...DEFAULT_GREEN_POSITIONS]);
-    try { localStorage.removeItem("golf-tee-pos"); localStorage.removeItem("golf-green-pos"); } catch(e){}
+    try { localStorage.removeItem("golf-green-pos"); } catch(e){}
   };
 
   const undoLast = () => {
@@ -1050,7 +1084,18 @@ function GolfShotTracker() {
                   {distToHole != null && (
                     <div style={{ fontSize: 13, color: "#2d8a4e", fontWeight: 700, marginTop: 2 }}>⛳ {distToHole}m att</div>
                   )}
-                  <button onClick={()=>setTee(t=>t==="yellow"?"red":"yellow")} style={{ fontSize: 11, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, textDecoration: "underline", fontWeight: 600 }}>Byt tee</button>
+                  <button onClick={()=>{
+                    const newTee = tee === "yellow" ? "red" : "yellow";
+                    setTee(newTee);
+                    // Viss inga slag er registrert på holet, oppdater lastPos til
+                    // den nye tee-posisjonen slik at avstand-utrekninga blir rett.
+                    // Viss slag er registrert, lat lastPos vere — då står ballen ein
+                    // anna stad og tee-byte påverkar berre kart-markøren.
+                    if (currentShots.length === 0) {
+                      const newTeePositions = newTee === "yellow" ? TEE_POSITIONS_YELLOW : TEE_POSITIONS_RED;
+                      setLastPos(newTeePositions[currentHole - 1]);
+                    }
+                  }} style={{ fontSize: 11, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, textDecoration: "underline", fontWeight: 600 }}>Byt tee</button>
                 </div>
               </div>
             )}

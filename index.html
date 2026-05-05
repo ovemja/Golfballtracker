@@ -45,22 +45,24 @@ const COURSE_DATA = [
 ];
 const TOTAL_PAR = COURSE_DATA.reduce((s, h) => s + h.par, 0);
 
-// Køller i aktiv bruk, matchar Trackman My Bag-mapping 22.04.2026.
-// Merk: "PW" = Honma #10 (46,5°), "SW" = Honma S (56°).
-// Honma #3, #4, #5, #7 (tidlegare), #11 og 3-wood er i bag men ikkje aktive.
+// Køller i aktiv bruk, matchar Trackman My Bag-mapping 02.05.2026.
+// Merk: "PW" = Honma #10 (46,5°), "GW" = Honma #11 (50°), "SW" = Honma S (56°).
+// Honma #3, #4, #5, #7 (tidlegare) og 3-wood er i bag men ikkje aktive.
 const CLUBS = [
   "Driver", "5-Wood",
   "6i", "7i", "8i", "9i",
-  "PW", "SW", "Putter"
+  "PW", "GW", "SW", "Putter"
 ];
 
 // Dispersjonsdata per kølle. Kjelder:
-//   - Carry-snitt: Trackman My Bag 22.04.2026 (akkumulert snitt, mest pålitelege tal)
+//   - Carry-snitt: Trackman My Bag 22.04.2026 (oppdatert 02.05.2026 for GW og SW)
 //   - Carry/side std.avvik: Combine-test 22.04.2026 per target
 //   - Side-snitt: Combine-test 22.04.2026 (negativ = venstre, positiv = høgre)
 // 5-Wood-dispersjon er estimat — Combine-data for 125–165m var forureina
 // av varierande kølle-val. Skal oppdaterast ved neste rein 5w-måling.
 // 9i carryStd er justert ned frå rå 27,9 (eitt 0,3m-mishit dominerte) til 10.
+// GW-dispersjon er estimert ved interpolasjon mellom PW og SW (lagt til 02.05.2026).
+// SW-dispersjon er estimat ut frå ny carry 43m (oppdatert 02.05.2026, var 49m).
 const CLUB_DISPERSION = {
   "Driver": { carry: 152, carryStd: 22,   side:  8.8, sideStd: 18   },
   "5-Wood": { carry: 122, carryStd: 15,   side:  0,   sideStd: 12   }, // estimat
@@ -69,7 +71,8 @@ const CLUB_DISPERSION = {
   "8i":     { carry:  86, carryStd: 10.1, side:  4.9, sideStd:  7.5 },
   "9i":     { carry:  76, carryStd: 10,   side: -0.1, sideStd:  4.0 }, // std justert
   "PW":     { carry:  62, carryStd:  6.0, side: -3.6, sideStd:  3.6 },
-  "SW":     { carry:  49, carryStd:  7.7, side:  0.2, sideStd:  3.6 },
+  "GW":     { carry:  53, carryStd:  6.8, side: -1.7, sideStd:  3.6 }, // estimat
+  "SW":     { carry:  43, carryStd:  7.0, side:  0.2, sideStd:  3.3 }, // estimat
 };
 
 // Rekn ut punkt langs ein retning frå ei startposisjon

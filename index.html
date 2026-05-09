@@ -893,17 +893,16 @@ function GolfShotTracker() {
     ? Math.round(haversineDistance(lastPos.lat, lastPos.lon, greenPos.lat, greenPos.lon))
     : null;
 
-  // Synkroniser caddie-valet til selectedClub slik at dispersjons-ellipsen
-  // oppdaterer seg dynamisk når brukaren blar med ◀▶ eller når auto-forslaget
-  // endrar seg. Køyrer berre i caddie-modus, i "club"-step (før slag er valt).
+  // Synkroniser auto-forslag til selectedClub når brukaren ikkje har bla manuelt
+  // (caddieIndex er null). Når brukaren blar med ◀▶, setjast selectedClub direkte
+  // i knappens onClick. Denne useEffect handsamer berre auto-forslag.
   useEffect(() => {
     if (!caddieMode || showAllClubs) return;
     if (step !== "club") return;
+    if (caddieIndex !== null) return; // brukaren har bla manuelt — ikkje overskriv
     const autoClub = distToHole != null ? findNearestClub(distToHole) : "Driver";
-    const idx = caddieIndex !== null ? caddieIndex : caddieIndexOf(autoClub);
-    const club = CADDIE_CLUBS[idx];
-    if (club !== selectedClub) setSelectedClub(club);
-  }, [caddieMode, showAllClubs, step, caddieIndex, distToHole]);
+    if (autoClub !== selectedClub) setSelectedClub(autoClub);
+  }, [caddieMode, showAllClubs, step, caddieIndex, distToHole, currentHole]);
 
   const handleSelectClub = club => {
     setSelectedClub(club);
@@ -1452,6 +1451,7 @@ function GolfShotTracker() {
                           // ◀ = lengre kølle (lågare indeks i CADDIE_CLUBS, sirkulært)
                           const newIdx = (idx - 1 + CADDIE_CLUBS.length) % CADDIE_CLUBS.length;
                           setCaddieIndex(newIdx);
+                          setSelectedClub(CADDIE_CLUBS[newIdx]);
                         }} style={{
                           padding: "16px 18px", background: "#f5f5f0", border: "2px solid #1a3a25",
                           borderRadius: 10, fontSize: 22, fontWeight: 700, color: "#1a3a25", cursor: "pointer",
@@ -1470,6 +1470,7 @@ function GolfShotTracker() {
                           // ▶ = kortare kølle (høgare indeks, sirkulært)
                           const newIdx = (idx + 1) % CADDIE_CLUBS.length;
                           setCaddieIndex(newIdx);
+                          setSelectedClub(CADDIE_CLUBS[newIdx]);
                         }} style={{
                           padding: "16px 18px", background: "#f5f5f0", border: "2px solid #1a3a25",
                           borderRadius: 10, fontSize: 22, fontWeight: 700, color: "#1a3a25", cursor: "pointer",

@@ -393,13 +393,19 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
   const greenPos = greenPositions[currentHole - 1];
   const teePos = teePositions[currentHole - 1];
   // Sikte-mål-logikk:
-  //   1. Manuell aim-point (brukar trykt "🎯 Endre sikteretning") overstyrer alt
-  //   2. Elles: bruk OSM hole-line — neste mellomnode framom siste posisjon, eller green
-  //   3. Fallback: greenPos
-  // lastPos er kvar brukaren faktisk er (etter siste slag eller på tee).
-  // I caddie-modus brukar vi denne for å avgjere kva node som er "framom".
-  const aimTarget = aimPoint
-    || (greenPos ? findNextAimTarget(lastPos || teePos, currentHole - 1, greenPos) : null);
+  //   - Manuell aim-point (🎯-knappen) overstyrer alt.
+  //   - På fyrste slag på holet (currentShots.length === 0): bruk fyrste OSM-
+  //     mellomnode viss han finst. Det er "scratch-spelar landingsmål" og
+  //     handterer dogleg-hol som hol 4 (skog) og hol 6 (mjuk kurve).
+  //   - Elles: green-senter.
+  // Funksjonen findNextAimTarget er bevart i koden men ikkje brukt enno —
+  // ho var for naiv for mjuke doglegs (parkert 11.05.2026, sjå hol 6-bug).
+  const isFirstShot = currentShots.length === 0;
+  const intermediates = OSM_HOLE_INTERMEDIATES[currentHole - 1];
+  const teeAimNode = isFirstShot && intermediates && intermediates.length > 0
+    ? intermediates[0]
+    : null;
+  const aimTarget = aimPoint || teeAimNode || greenPos;
 
   clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
 

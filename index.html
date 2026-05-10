@@ -250,6 +250,62 @@ const GREEN_ELEVATIONS = [
   176.5, 181.9, 179.1, 188.1, 190.3, 196.7, 200.7, 194.3, 182.7,  // Green hol 10–18
 ];
 
+// OSM "golf=hole" mellomnoder for Sunnfjord GK (henta frå Overpass-API 05.05.2026).
+// Kvar liste er mellompunkta langs spelevegen frå tee til green — utan tee og
+// utan green sjølv (dei brukast frå TEE_POSITIONS / DEFAULT_GREEN_POSITIONS).
+// Tom liste = rett linje frå tee til green (par 3-hol, og hol utan dogleg).
+// Brukt av sikte-logikken: ellipsen peikar mot neste node ut frå kvar du står,
+// slik at dogleg-hol får realistisk sikteretning. Indeks = holnr - 1 (hol 1-9
+// brukar dei same linjene som hol 10-18 sidan dei deler bane).
+const OSM_HOLE_INTERMEDIATES = [
+  [{ lat: 61.4862648, lon: 6.0773600 }],                                          // Hol 1
+  [{ lat: 61.4851632, lon: 6.0781625 }, { lat: 61.4843026, lon: 6.0782990 }],     // Hol 2 (par 5)
+  [],                                                                              // Hol 3 (par 3)
+  [{ lat: 61.4847895, lon: 6.0817276 }],                                          // Hol 4 (par 5, men berre 1 mellomnode i OSM)
+  [{ lat: 61.4831006, lon: 6.0806725 }],                                          // Hol 5
+  [{ lat: 61.4826602, lon: 6.0836185 }],                                          // Hol 6
+  [],                                                                              // Hol 7 (par 3)
+  [{ lat: 61.4833892, lon: 6.0825178 }],                                          // Hol 8
+  [{ lat: 61.4858620, lon: 6.0823667 }],                                          // Hol 9
+  [{ lat: 61.4862648, lon: 6.0773600 }],                                          // Hol 10 (= hol 1)
+  [{ lat: 61.4851632, lon: 6.0781625 }, { lat: 61.4843026, lon: 6.0782990 }],     // Hol 11
+  [],                                                                              // Hol 12
+  [{ lat: 61.4847895, lon: 6.0817276 }],                                          // Hol 13
+  [{ lat: 61.4831006, lon: 6.0806725 }],                                          // Hol 14
+  [{ lat: 61.4826602, lon: 6.0836185 }],                                          // Hol 15
+  [],                                                                              // Hol 16
+  [{ lat: 61.4833892, lon: 6.0825178 }],                                          // Hol 17
+  [{ lat: 61.4858620, lon: 6.0823667 }],                                          // Hol 18
+];
+
+// Finn neste sikte-mål basert på OSM hole-line. Logikk:
+//   1. Hent mellomnodene for gjeldande hol
+//   2. For kvar mellomnode: sjekk om den er framom brukaren i retning mot green
+//   3. Returner næraste node som er framom (i retning mot green)
+//   4. Viss ingen mellomnoder framom (du har passert alle): returner green
+// Dette gjer at ellipsen siktar mot kne-punkt på dogleg når du står på tee,
+// og mot green når du er forbi knepunktet.
+function findNextAimTarget(fromPos, holeIndex, greenPos) {
+  const intermediates = OSM_HOLE_INTERMEDIATES[holeIndex];
+  if (!intermediates || intermediates.length === 0) return greenPos;
+
+  // For kvar mellomnode: rekn ut avstand frå fromPos til node og frå node til green.
+  // Vi vil sikta mot første node der avstand-frå-fromPos < avstand-frå-fromPos-til-green
+  // OG der noden ligg "framom" deg (nærmare green enn deg sjølv).
+  const distFromToGreen = haversineDistance(fromPos.lat, fromPos.lon, greenPos.lat, greenPos.lon);
+  for (const node of intermediates) {
+    const distFromToNode = haversineDistance(fromPos.lat, fromPos.lon, node.lat, node.lon);
+    const distNodeToGreen = haversineDistance(node.lat, node.lon, greenPos.lat, greenPos.lon);
+    // Noden er framom oss viss han er nærare green enn vi er.
+    // Og vi siktar mot han viss vi enno ikkje har nådd han (avstand til node > 5m).
+    if (distNodeToGreen < distFromToGreen && distFromToNode > 5) {
+      return node;
+    }
+  }
+  // Alle mellomnoder er passert — sikta mot green
+  return greenPos;
+}
+
 const MAP_COLORS = [
   "#cc0000","#e67300","#ccaa00","#2d8a4e","#1a8a7a",
   "#2266cc","#4444cc","#8833aa","#cc3377","#cc4400",
@@ -336,7 +392,14 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
 
   const greenPos = greenPositions[currentHole - 1];
   const teePos = teePositions[currentHole - 1];
-  const aimTarget = aimPoint || greenPos;
+  // Sikte-mål-logikk:
+  //   1. Manuell aim-point (brukar trykt "🎯 Endre sikteretning") overstyrer alt
+  //   2. Elles: bruk OSM hole-line — neste mellomnode framom siste posisjon, eller green
+  //   3. Fallback: greenPos
+  // lastPos er kvar brukaren faktisk er (etter siste slag eller på tee).
+  // I caddie-modus brukar vi denne for å avgjere kva node som er "framom".
+  const aimTarget = aimPoint
+    || (greenPos ? findNextAimTarget(lastPos || teePos, currentHole - 1, greenPos) : null);
 
   clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
 

@@ -1271,22 +1271,35 @@ function GolfShotTracker() {
                       setLastPos(newTeePositions[currentHole - 1]);
                     }
                   }} style={{ fontSize: 11, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, textDecoration: "underline", fontWeight: 600 }}>Byt tee</button>
-                  {/* Byt loop: berre tilgjengeleg ved start av runde (ingen hol spelt, ingen slag).
-                      Mid-runde er det ikkje lov å endre — det ville rote til datagrunnlaget. */}
-                  {holes.length === 0 && currentShots.length === 0 && (
-                    <button onClick={()=>{
-                      const newLoop = loop === "front" ? "back" : "front";
-                      const newStartHole = newLoop === "front" ? 1 : 10;
-                      setLoop(newLoop);
-                      setCurrentHole(newStartHole);
-                      const newTeePositions = tee === "yellow" ? TEE_POSITIONS_YELLOW : TEE_POSITIONS_RED;
-                      setLastPos(newTeePositions[newStartHole - 1]);
-                      try { localStorage.setItem("golf-loop", newLoop); } catch(e){}
-                    }} style={{ fontSize: 11, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, marginLeft: 8, textDecoration: "underline", fontWeight: 600 }}>
-                      {loop === "front" ? "→ Back 9" : "→ Front 9"}
-                    </button>
-                  )}
                 </div>
+              </div>
+            )}
+
+            {/* Loop-veljar: synleg berre ved start av runde, før første slag.
+                Forsvinn så snart første slag er registrert. Tydeleg val mellom
+                front 9 (hol 1-9) og back 9 (hol 10-18). */}
+            {holes.length === 0 && currentShots.length === 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", marginBottom: 10, background: "#fff", borderRadius: 10, border: "2px solid #c8b48c" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Du startar med:</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: "#1a3a25" }}>
+                    {loop === "front" ? "Front 9 (hol 1–9)" : "Back 9 (hol 10–18)"}
+                  </div>
+                </div>
+                <button onClick={()=>{
+                  const newLoop = loop === "front" ? "back" : "front";
+                  const newStartHole = newLoop === "front" ? 1 : 10;
+                  setLoop(newLoop);
+                  setCurrentHole(newStartHole);
+                  const newTeePositions = tee === "yellow" ? TEE_POSITIONS_YELLOW : TEE_POSITIONS_RED;
+                  setLastPos(newTeePositions[newStartHole - 1]);
+                  try { localStorage.setItem("golf-loop", newLoop); } catch(e){}
+                }} style={{
+                  padding: "10px 14px", background: "#1a3a25", border: "none",
+                  borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                }}>
+                  Byt til {loop === "front" ? "Back 9" : "Front 9"}
+                </button>
               </div>
             )}
 

@@ -170,14 +170,14 @@ const TEE_POSITIONS_YELLOW = [
   { lat: 61.48243,  lon: 6.08144  }, // hol 8 — ortofoto-verifisert 12.05.2026
   { lat: 61.484767, lon: 6.08487  },
   { lat: 61.486882, lon: 6.079776 },
-  { lat: 61.485685, lon: 6.075964 },
-  { lat: 61.484,    lon: 6.079223 },
-  { lat: 61.483718, lon: 6.079842 },
-  { lat: 61.484394, lon: 6.082539 },
-  { lat: 61.48195,  lon: 6.081292 },
-  { lat: 61.484058, lon: 6.083931 },
-  { lat: 61.482616, lon: 6.081337 },
-  { lat: 61.4848,   lon: 6.084791 },
+  { lat: 61.48574,  lon: 6.07700  }, // hol 11 — verifisert 13.05.2026
+  { lat: 61.48385,  lon: 6.07938  }, // hol 12 — verifisert 13.05.2026
+  { lat: 61.48359,  lon: 6.07945  }, // hol 13 — verifisert 13.05.2026
+  { lat: 61.48442,  lon: 6.08261  }, // hol 14 — verifisert 13.05.2026
+  { lat: 61.48158,  lon: 6.08052  }, // hol 15 — verifisert 13.05.2026
+  { lat: 61.484058, lon: 6.083931 }, // hol 16 — ikkje verifisert
+  { lat: 61.48232,  lon: 6.08078  }, // hol 17 — verifisert 13.05.2026
+  { lat: 61.48477,  lon: 6.08488  }, // hol 18 — verifisert 13.05.2026
 ];
 
 const TEE_POSITIONS_RED = [
@@ -289,21 +289,55 @@ function findNextAimTarget(fromPos, holeIndex, greenPos) {
   const intermediates = OSM_HOLE_INTERMEDIATES[holeIndex];
   if (!intermediates || intermediates.length === 0) return greenPos;
 
-  // For kvar mellomnode: rekn ut avstand frå fromPos til node og frå node til green.
-  // Vi vil sikta mot første node der avstand-frå-fromPos < avstand-frå-fromPos-til-green
-  // OG der noden ligg "framom" deg (nærmare green enn deg sjølv).
+  // To krav må vere oppfylte for å sikta mot ein mellomnode:
+  //
+  // 1. BUFFER: spelaren må vere klart framom noden — minst 25m meir enn noden
+  //    er frå green. Dette hindrar at vi siktar mot noder vi er nesten forbi,
+  //    noko som gir feil retning (t.d. hol 6 frå fairway 164m → node 152m
+  //    frå green: 164 ≤ 152+25=177 → skip → sikt mot green ✓).
+  //
+  // 2. VINKEL: retninga mot noden vs retninga mot green må skilja seg med
+  //    minst 15°. Er det lite skilje, er det inga meining i å sikte mot noden
+  //    framfor green direkte (t.d. hol 1, 5, 8, 9 som er nesten rette linjer).
+  //
+  // Dersom begge krav er oppfylt, returnerast noden (siktar mot dogleg-kneepunkt).
+  // Elles: neste node i lista, eller til slutt: green.
+
   const distFromToGreen = haversineDistance(fromPos.lat, fromPos.lon, greenPos.lat, greenPos.lon);
+
   for (const node of intermediates) {
-    const distFromToNode = haversineDistance(fromPos.lat, fromPos.lon, node.lat, node.lon);
     const distNodeToGreen = haversineDistance(node.lat, node.lon, greenPos.lat, greenPos.lon);
-    // Noden er framom oss viss han er nærare green enn vi er.
-    // Og vi siktar mot han viss vi enno ikkje har nådd han (avstand til node > 5m).
-    if (distNodeToGreen < distFromToGreen && distFromToNode > 5) {
-      return node;
-    }
+    const distFromToNode  = haversineDistance(fromPos.lat, fromPos.lon, node.lat, node.lon);
+
+    // Krav 1: buffer — spelaren er klart framom noden
+    if (distFromToGreen <= distNodeToGreen + 25) continue;
+
+    // Ikkje sikt mot ein node vi er < 10m frå
+    if (distFromToNode < 10) continue;
+
+    // Krav 2: vinkel — retninga mot node vs green må skilje minst 15°
+    const bNode  = calcBearing(fromPos.lat, fromPos.lon, node.lat, node.lon);
+    const bGreen = calcBearing(fromPos.lat, fromPos.lon, greenPos.lat, greenPos.lon);
+    let angleDiff = Math.abs(bNode - bGreen);
+    if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+    if (angleDiff * 180 / Math.PI < 15) continue;
+
+    return node;
   }
-  // Alle mellomnoder er passert — sikta mot green
   return greenPos;
+}
+
+// Estimerer høgde på spelaren sin posisjon via lineær interpolasjon mellom
+// tee-høgde og green-høgde. Gir eit godt nok estimat for dei fleste hol sidan
+// Sunnfjord ikkje har store terrengvariasjonar mellom tee og green.
+// fraction=1 = på tee, fraction=0 = på green.
+function estimateCurrentElevation(currentPos, teePos, greenPos, teeElev, greenElev) {
+  if (!currentPos || !teePos || !greenPos) return null;
+  const distToGreen = haversineDistance(currentPos.lat, currentPos.lon, greenPos.lat, greenPos.lon);
+  const holeDist    = haversineDistance(teePos.lat, teePos.lon, greenPos.lat, greenPos.lon);
+  if (holeDist === 0) return teeElev;
+  const fraction = Math.min(1, Math.max(0, distToGreen / holeDist));
+  return greenElev + fraction * (teeElev - greenElev);
 }
 
 const MAP_COLORS = [
@@ -393,19 +427,15 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
   const greenPos = greenPositions[currentHole - 1];
   const teePos = teePositions[currentHole - 1];
   // Sikte-mål-logikk:
-  //   - Manuell aim-point (🎯-knappen) overstyrer alt.
-  //   - På fyrste slag på holet (currentShots.length === 0): bruk fyrste OSM-
-  //     mellomnode viss han finst. Det er "scratch-spelar landingsmål" og
-  //     handterer dogleg-hol som hol 4 (skog) og hol 6 (mjuk kurve).
-  //   - Elles: green-senter.
-  // Funksjonen findNextAimTarget er bevart i koden men ikkje brukt enno —
-  // ho var for naiv for mjuke doglegs (parkert 11.05.2026, sjå hol 6-bug).
-  const isFirstShot = currentShots.length === 0;
-  const intermediates = OSM_HOLE_INTERMEDIATES[currentHole - 1];
-  const teeAimNode = isFirstShot && intermediates && intermediates.length > 0
-    ? intermediates[0]
-    : null;
-  const aimTarget = aimPoint || teeAimNode || greenPos;
+  //   1. Manuell aim-point (🎯-knappen) overstyrer alt.
+  //   2. Elles: dynamisk OSM hole-line via findNextAimTarget — siktar mot
+  //      neste relevante mellomnoden (kneepunkt på dogleg) dersom spelaren er
+  //      klart framom noden OG vinkelen er signifikant (≥15°). Elles green.
+  //   3. Fallback: greenPos.
+  // Algoritmen (buffer + vinkelsjekk) løyser hol 6-bugen frå 11.05.2026:
+  // frå fairway 164m → node 152m frå green: 164 ≤ 177 (buffer) → sikt green ✓.
+  const aimTarget = aimPoint
+    || (greenPos ? findNextAimTarget(lastPos || teePos, currentHole - 1, greenPos) : null);
 
   clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
 
@@ -985,6 +1015,21 @@ function GolfShotTracker() {
     ? Math.round(haversineDistance(lastPos.lat, lastPos.lon, greenPos.lat, greenPos.lon))
     : null;
 
+  // Spel-avstand med høgdejustering (÷3-regelen: 3m stigning = +1m spel-avstand).
+  // Brukar lineær interpolasjon for å estimere høgde på spelaren sin posisjon.
+  const teeElevations = tee === "yellow" ? TEE_ELEVATIONS_YELLOW : TEE_ELEVATIONS_RED;
+  const teeElev   = teeElevations[currentHole - 1];
+  const greenElev = GREEN_ELEVATIONS[currentHole - 1];
+  const teePos2   = teePositions[currentHole - 1]; // alias for bruk utanfor GolfMap
+  const currentElev = lastPos && teePos2 && greenPos
+    ? estimateCurrentElevation(lastPos, teePos2, greenPos, teeElev, greenElev)
+    : null;
+  // elevDiffToGreen: positiv = oppoverbakke til green, negativ = nedoverbakke
+  const elevDiffToGreen = currentElev != null ? Math.round(greenElev - currentElev) : null;
+  const playsLike = distToHole != null && elevDiffToGreen != null
+    ? Math.round(distToHole + elevDiffToGreen / 3)
+    : null;
+
   // Synkroniser auto-forslag til selectedClub når brukaren ikkje har bla manuelt
   // (caddieIndex er null). Når brukaren blar med ◀▶, setjast selectedClub direkte
   // i knappens onClick. Denne useEffect handsamer berre auto-forslag.
@@ -1257,7 +1302,14 @@ function GolfShotTracker() {
                     {tee==="yellow"?holeInfo.yellowM:holeInfo.redM}m
                   </div>
                   {distToHole != null && (
-                    <div style={{ fontSize: 13, color: "#2d8a4e", fontWeight: 700, marginTop: 2 }}>⛳ {distToHole}m att</div>
+                    <div style={{ fontSize: 13, color: "#2d8a4e", fontWeight: 700, marginTop: 2 }}>
+                      ⛳ {distToHole}m att
+                      {playsLike != null && playsLike !== distToHole && (
+                        <span style={{ marginLeft: 6, color: "#666", fontWeight: 600 }}>
+                          · spel {playsLike}m {elevDiffToGreen > 0 ? "↗" : "↘"}
+                        </span>
+                      )}
+                    </div>
                   )}
                   <button onClick={()=>{
                     const newTee = tee === "yellow" ? "red" : "yellow";
@@ -1583,8 +1635,13 @@ function GolfShotTracker() {
                           <div style={{ fontSize: 14, color: "#e67300", fontWeight: 700, marginTop: 2 }}>
                             total {total}m{disp ? ` · carry ${disp.carry}m` : ""}
                           </div>
+                          {playsLike != null && playsLike !== distToHole && (
+                            <div style={{ fontSize: 12, color: "#666", marginTop: 1 }}>
+                              spel {playsLike}m att {elevDiffToGreen > 0 ? "↗" : "↘"}
+                            </div>
+                          )}
                           {isAutoSuggestion && (
-                            <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>(foreslått)</div>
+                            <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>(foreslått)</div>
                           )}
                         </div>
                         <button onClick={()=>{

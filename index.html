@@ -1127,7 +1127,11 @@ function GolfShotTracker() {
     if (!caddieMode || showAllClubs) return;
     if (step !== "club") return;
     if (caddieIndex !== null) return; // brukaren har bla manuelt — ikkje overskriv
-    const autoClub = distToHole != null ? findNearestClub(distToHole) : "Driver";
+    // Bruk spel-avstand (høgdejustert) som grunnlag for caddie-forslag dersom
+    // tilgjengeleg. Flat avstand er fallback (t.d. Sandane utan høgdedata, eller
+    // tidleg i runden der spel-avstand ikkje er rekna ut enno).
+    const caddieTarget = playsLike ?? distToHole;
+    const autoClub = caddieTarget != null ? findNearestClub(caddieTarget) : "Driver";
     if (autoClub !== selectedClub) setSelectedClub(autoClub);
   }, [caddieMode, showAllClubs, step, caddieIndex, distToHole, currentHole]);
 

@@ -94,6 +94,10 @@ const CLUB_TOTAL = {
 // Køller sortert lengst -> kortast (utan Putter), brukt av caddie-modus.
 const CADDIE_CLUBS = ["Driver", "5-Wood", "6i", "7i", "8i", "9i", "PW", "GW", "SW"];
 
+// Sans-serif font-stack for tal-displayar. Betre lesbarheit på mobilskjerm i
+// sterkt sollys enn Georgia. Brukar systemfont for å unngå ekstra fontlasting.
+const NUM_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
 /**
  * Finn kølla med totalavstand nærast mål-avstanden.
  * Klampar: viss målet er > Driver, returner Driver. Viss < SW, returner SW.
@@ -1029,13 +1033,13 @@ function Scorecard({ holes, currentHole, currentShots, tee, courseData }) {
           return (<div key={h.hole} style={{ flex: 1, textAlign: "center", borderRadius: 6, padding: "6px 0", background: act?"#e8f5e9":"#fff", border: act?"2px solid #1a3a25":"1px solid #ddd" }}>
             <div style={{ fontSize: 11, color: "#666", fontWeight: 700 }}>{h.hole}</div>
             <div style={{ fontSize: 10, color: "#999" }}>P{h.par}</div>
-            <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: scoreClr(sc, h.par), fontFamily: "monospace" }}>{sc != null ? sc : (act && currentShots.length > 0 ? currentShots.length : "–")}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: scoreClr(sc, h.par), fontFamily: NUM_FONT }}>{sc != null ? sc : (act && currentShots.length > 0 ? currentShots.length : "–")}</div>
           </div>);
         })}
         <div style={{ width: 40, textAlign: "center", flexShrink: 0, borderRadius: 6, padding: "6px 0", background: "#f5f5f0", border: "1px solid #ccc" }}>
           <div style={{ fontSize: 11, color: "#666", fontWeight: 700 }}>Sum</div>
           <div style={{ fontSize: 10, color: "#999" }}>P{data.reduce((s,h)=>s+h.par,0)}</div>
-          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: "#1a3a25", fontFamily: "monospace" }}>{data.reduce((s,h)=>s+(getScore(h.hole)||0),0)||"–"}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: "#1a3a25", fontFamily: NUM_FONT }}>{data.reduce((s,h)=>s+(getScore(h.hole)||0),0)||"–"}</div>
         </div>
       </div>
     </div>
@@ -1567,7 +1571,7 @@ function GolfShotTracker() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#fff" }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</h1>
-              <p style={{ margin: "2px 0 0", fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 600 }}>
+              <p style={{ margin: "2px 0 0", fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 600, fontFamily: NUM_FONT }}>
                 Hol {currentHole}/{endHole}
                 {loop === "back" && hasLoop && <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 4 }}>(back)</span>}
                 {holes.length > 0 && <span style={{ color: scoreDiff>0?"#ff8a8a":scoreDiff<0?"#8eff8e":"#8ad4ff", marginLeft: 8 }}>{scoreDiff>0?`+${scoreDiff}`:scoreDiff===0?"E":scoreDiff}</span>}
@@ -1597,24 +1601,24 @@ function GolfShotTracker() {
             {holeInfo && (
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", marginBottom: 10, background: "#fff", borderRadius: 12, border: "2px solid #1a3a25" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: "#1a3a25" }}>Hol {currentHole}</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#1a3a25", fontFamily: NUM_FONT }}>Hol {currentHole}</div>
                   <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Index {holeInfo.index}</div>
                 </div>
-                <div style={{ textAlign: "center", padding: "0 12px" }}>
-                  <div style={{ fontSize: 26, fontWeight: 700, color: "#1a3a25" }}>{holeInfo.par}</div>
-                  <div style={{ fontSize: 10, color: "#888", fontWeight: 700 }}>PAR</div>
+                <div style={{ textAlign: "center", padding: "0 10px" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#888", fontFamily: NUM_FONT }}>{holeInfo.par}</div>
+                  <div style={{ fontSize: 9, color: "#aaa", fontWeight: 700 }}>PAR</div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a" }}>
-                    <span style={{ width: 12, height: 12, borderRadius: 2, background: tee==="yellow"?"#e6c200":"#cc0000", display: "inline-block", marginRight: 5, border: "1px solid rgba(0,0,0,0.2)" }} />
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#888", fontFamily: NUM_FONT }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 2, background: tee==="yellow"?"#e6c200":"#cc0000", display: "inline-block", marginRight: 4, border: "1px solid rgba(0,0,0,0.2)" }} />
                     {tee==="yellow"?holeInfo.yellowM:holeInfo.redM}m
                   </div>
                   {distToHole != null && (
-                    <div style={{ fontSize: 13, color: "#2d8a4e", fontWeight: 700, marginTop: 2 }}>
-                      ⛳ {distToHole}m att
+                    <div style={{ fontSize: 22, color: "#2d8a4e", fontWeight: 800, marginTop: 2, fontFamily: NUM_FONT, lineHeight: 1.1 }}>
+                      ⛳ {distToHole}m
                       {playsLike != null && playsLike !== distToHole && (
-                        <span style={{ marginLeft: 6, color: "#666", fontWeight: 600 }}>
-                          · spel {playsLike}m {elevDiffToGreen > 0 ? "↗" : "↘"}
+                        <span style={{ marginLeft: 6, color: "#666", fontWeight: 600, fontSize: 13 }}>
+                          spel {playsLike}m {elevDiffToGreen > 0 ? "↗" : "↘"}
                         </span>
                       )}
                     </div>
@@ -1934,12 +1938,12 @@ function GolfShotTracker() {
                           minWidth: 56,
                         }}>◀</button>
                         <div style={{ flex: 1, textAlign: "center" }}>
-                          <div style={{ fontSize: 26, fontWeight: 800, color: "#1a3a25" }}>{club}</div>
-                          <div style={{ fontSize: 14, color: "#e67300", fontWeight: 700, marginTop: 2 }}>
+                          <div style={{ fontSize: 26, fontWeight: 800, color: "#1a3a25", fontFamily: NUM_FONT }}>{club}</div>
+                          <div style={{ fontSize: 14, color: "#e67300", fontWeight: 700, marginTop: 2, fontFamily: NUM_FONT }}>
                             total {total}m{disp ? ` · carry ${disp.carry}m` : ""}
                           </div>
                           {playsLike != null && playsLike !== distToHole && (
-                            <div style={{ fontSize: 12, color: "#666", marginTop: 1 }}>
+                            <div style={{ fontSize: 12, color: "#666", marginTop: 1, fontFamily: NUM_FONT }}>
                               spel {playsLike}m att {elevDiffToGreen > 0 ? "↗" : "↘"}
                             </div>
                           )}

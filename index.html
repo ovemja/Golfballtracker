@@ -94,9 +94,13 @@ const CLUB_TOTAL = {
 // Køller sortert lengst -> kortast (utan Putter), brukt av caddie-modus.
 const CADDIE_CLUBS = ["Driver", "5-Wood", "6i", "7i", "8i", "9i", "PW", "GW", "SW"];
 
-// Finn kølla med totalavstand nærast mål-avstanden (absolutt verdi).
-// Klampar: viss målet er > Driver, returner Driver. Viss < SW, returner SW.
-// Returnerer kølle-namn (string).
+/**
+ * Finn kølla med totalavstand nærast mål-avstanden.
+ * Klampar: viss målet er > Driver, returner Driver. Viss < SW, returner SW.
+ *
+ * @param {number} targetMeters - Ønska avstand i meter (typisk distToHole eller playsLike)
+ * @returns {string} Kølle-namn frå CADDIE_CLUBS (t.d. "7i", "Driver", "PW")
+ */
 function findNearestClub(targetMeters) {
   if (targetMeters >= CLUB_TOTAL["Driver"]) return "Driver";
   if (targetMeters <= CLUB_TOTAL["SW"]) return "SW";
@@ -109,12 +113,26 @@ function findNearestClub(targetMeters) {
   return best;
 }
 
-// Returnerer indeks i CADDIE_CLUBS for ein gitt kølle. -1 viss ikkje funne.
+/**
+ * Returnerer indeks i CADDIE_CLUBS for ein gitt kølle.
+ *
+ * @param {string} club - Kølle-namn (t.d. "7i", "Driver")
+ * @returns {number} Indeks 0-8 i CADDIE_CLUBS, eller -1 viss ikkje funne
+ */
 function caddieIndexOf(club) {
   return CADDIE_CLUBS.indexOf(club);
 }
 
-// Rekn ut punkt langs ein retning frå ei startposisjon
+/**
+ * Reknar ut destinasjonspunkt frå startposisjon, retning og avstand.
+ * Brukar Vincenty-formel (forward problem) på kuleflata, presis nok for golf-avstandar.
+ *
+ * @param {number} lat - Startbreiddegrad (desimalgrader)
+ * @param {number} lon - Startlengdegrad (desimalgrader)
+ * @param {number} distMeters - Avstand i meter
+ * @param {number} bearingRad - Retning i radianar (0 = nord, π/2 = aust)
+ * @returns {{lat: number, lon: number}} Destinasjonspunkt
+ */
 function pointAtDistanceAndBearing(lat, lon, distMeters, bearingRad) {
   const R = 6371000;
   const d = distMeters / R;
@@ -125,7 +143,15 @@ function pointAtDistanceAndBearing(lat, lon, distMeters, bearingRad) {
   return { lat: lat2 * 180 / Math.PI, lon: lon2 * 180 / Math.PI };
 }
 
-// Rekn ut retning (bearing) mellom to punkt
+/**
+ * Reknar ut initial bearing (kompass-retning) frå punkt 1 til punkt 2.
+ *
+ * @param {number} lat1 - Breiddegrad start
+ * @param {number} lon1 - Lengdegrad start
+ * @param {number} lat2 - Breiddegrad mål
+ * @param {number} lon2 - Lengdegrad mål
+ * @returns {number} Retning i radianar (0 = nord, π/2 = aust). Kan vere negativ.
+ */
 function calcBearing(lat1, lon1, lat2, lon2) {
   const p = Math.PI / 180;
   const dLon = (lon2 - lon1) * p;
@@ -134,7 +160,20 @@ function calcBearing(lat1, lon1, lat2, lon2) {
   return Math.atan2(y, x);
 }
 
-// Generer ellipse-polygon (array av lat/lon-punkt)
+/**
+ * Genererer dispersjonsellipse-polygon basert på Trackman-statistikk.
+ * Ellipsen er sentrert ved (carry, sideBias) frå startposisjon, rotert i bearing-retning.
+ *
+ * @param {number} fromLat - Startbreiddegrad
+ * @param {number} fromLon - Startlengdegrad
+ * @param {number} bearingRad - Sikteretning i radianar
+ * @param {number} carry - Forventa lufttid-avstand i meter (m_y)
+ * @param {number} carryStd - Standardavvik framover/bakover (m)
+ * @param {number} sideBias - Forventa avvik til side (+ = høgre, - = venstre)
+ * @param {number} sideStd - Standardavvik side
+ * @param {number} [numPoints=36] - Tal punkt i polygon
+ * @returns {Array<[number, number]>} Liste med [lat, lon] for polygon-perimeter
+ */
 function generateEllipse(fromLat, fromLon, bearingRad, carry, carryStd, sideBias, sideStd, numPoints = 36) {
   const points = [];
   for (let i = 0; i <= numPoints; i++) {
@@ -278,13 +317,26 @@ const OSM_HOLE_INTERMEDIATES = [
   [{ lat: 61.4858620, lon: 6.0823667 }],                                          // Hol 18
 ];
 
-// Finn neste sikte-mål basert på OSM hole-line. Logikk:
-//   1. Hent mellomnodene for gjeldande hol
-//   2. For kvar mellomnode: sjekk om den er framom brukaren i retning mot green
-//   3. Returner næraste node som er framom (i retning mot green)
-//   4. Viss ingen mellomnoder framom (du har passert alle): returner green
-// Dette gjer at ellipsen siktar mot kne-punkt på dogleg når du står på tee,
-// og mot green når du er forbi knepunktet.
+/**
+ * Finn neste sikte-mål basert på OSM hole-line (dogleg-knekkpunkt) eller green.
+ *
+ * Sikteretning er viktig for dispersjonsellipsen: ho må peike der spelaren faktisk
+ * skal sikte, ikkje rett mot green på dogleg-hol.
+ *
+ * Algoritmen sjekkar tre krav per mellomnode:
+ *   1. **Buffer**: spelaren må vere klart framom noden (>25m meir til green enn noden).
+ *      Hindrar sikting mot noder ein nesten har passert.
+ *   2. **Avstand**: spelaren må ikkje vere innan 10m av noden sjølv.
+ *   3. **Vinkel**: retning mot node vs green må skilje seg med minst 10°.
+ *      Hindrar sikting mot "strategiske noder" som ligg på rett linje (t.d. hol 5 Sandane).
+ *
+ * Manuell aim-point (set via 🎯 Endre sikteretning-knappen) overstyrer denne logikken.
+ *
+ * @param {{lat: number, lon: number}} fromPos - Spelaren sin posisjon (tee eller siste ball)
+ * @param {Array<{lat: number, lon: number, elev?: number}>} intermediates - Mellomnoder for holet
+ * @param {{lat: number, lon: number}} greenPos - Green-posisjon
+ * @returns {{lat: number, lon: number}} Sikte-mål: enten ein node eller greenPos
+ */
 function findNextAimTarget(fromPos, intermediates, greenPos) {
   if (!intermediates || intermediates.length === 0) return greenPos;
 
@@ -314,25 +366,40 @@ function findNextAimTarget(fromPos, intermediates, greenPos) {
     // Ikkje sikt mot ein node vi er < 10m frå
     if (distFromToNode < 10) continue;
 
-    // Krav 2: vinkel — retninga mot node vs green må skilje minst 15°
+    // Krav 2: vinkel — retninga mot node vs green må skilje minst 10°
+    //   15° fanga ikkje opp mjuke dogleg som Sandane hol 1 node 2 (14°) og
+    //   hol 6 (14°). 10° er fleksibelt nok for desse, men strengt nok til at
+    //   strategiske noder med 2° (hol 5) ikkje feilaktig styrer sikteretninga.
     const bNode  = calcBearing(fromPos.lat, fromPos.lon, node.lat, node.lon);
     const bGreen = calcBearing(fromPos.lat, fromPos.lon, greenPos.lat, greenPos.lon);
     let angleDiff = Math.abs(bNode - bGreen);
     if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
-    if (angleDiff * 180 / Math.PI < 15) continue;
+    if (angleDiff * 180 / Math.PI < 10) continue;
 
     return node;
   }
   return greenPos;
 }
 
-// Estimerer høgde på spelaren sin posisjon via lineær interpolasjon mellom
-// tee-høgde og green-høgde. Gir eit godt nok estimat for dei fleste hol sidan
-// Estimerer høgde på spelaren sin posisjon via stykkevis lineær interpolasjon.
-// Viss mellomnoder med elev-felt finst, byggjer funksjonen ein segmentert profil
-// (tee → node1 → node2 → green) som fangar reelle høgdeendringar langs holet —
-// t.d. hol 9 Sandane (bratt ned til 104m, flatt vidare) og hol 7 (bratt start).
-// Utan elev-data på nodane: enkel lineær interpolasjon mellom tee og green.
+/**
+ * Estimerer høgde på spelaren sin posisjon via stykkevis lineær interpolasjon
+ * langs ein høgdeprofil.
+ *
+ * Med mellomnoder som har `elev`-felt: byggjer ein segmentert profil
+ * (tee → node1 → node2 → green) og finn rett segment basert på avstand frå tee.
+ * Fangar reelle terrengvariasjonar — t.d. hol 9 Sandane (bratt ned til 104m,
+ * flatt vidare) og hol 7 (bratt start, flat slutt).
+ *
+ * Utan elev-data på nodane: enkel lineær interpolasjon mellom tee og green.
+ *
+ * @param {{lat: number, lon: number}} currentPos - Spelaren sin posisjon
+ * @param {{lat: number, lon: number}} teePos - Tee-posisjon
+ * @param {{lat: number, lon: number}} greenPos - Green-posisjon
+ * @param {number} teeElev - Tee-høgde over havet (m, NN2000)
+ * @param {number} greenElev - Green-høgde over havet (m, NN2000)
+ * @param {Array<{lat: number, lon: number, elev?: number}>} [intermediates] - Mellomnoder
+ * @returns {number|null} Estimert høgde i meter, eller null viss input manglar
+ */
 function estimateCurrentElevation(currentPos, teePos, greenPos, teeElev, greenElev, intermediates) {
   if (!currentPos || !teePos || !greenPos) return null;
 
@@ -440,6 +507,16 @@ const OSM_HOLE_INTERMEDIATES_SANDANE = [
 const COURSE_CENTER_SANDANE = { lat: 61.7577, lon: 6.2387 };
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Reknar ut avstand mellom to GPS-punkt via haversine-formelen.
+ * Antek kuleform; presis nok for golf-avstandar (typisk feil < 0.5m på 300m).
+ *
+ * @param {number} lat1 - Breiddegrad punkt 1
+ * @param {number} lon1 - Lengdegrad punkt 1
+ * @param {number} lat2 - Breiddegrad punkt 2
+ * @param {number} lon2 - Lengdegrad punkt 2
+ * @returns {number} Avstand i meter
+ */
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const toRad = d => (d * Math.PI) / 180;
@@ -450,6 +527,13 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Konverterer slag-score til golf-terminologi.
+ *
+ * @param {number} score - Tal slag på holet
+ * @param {number} par - Par for holet
+ * @returns {string} "Eagle", "Birdie", "Par", "Bogey", "Dbl-bogey" eller "+N"
+ */
 function scoreLabel(score, par) {
   const diff = score - par;
   return diff <= -2 ? "Eagle" : diff === -1 ? "Birdie" :
@@ -458,9 +542,19 @@ function scoreLabel(score, par) {
 }
 
 // ─── GPS-posisjonering ───
-// Returnerer Promise med {lat, lon, accuracy} eller throw med forståeleg norsk feilmelding.
-// Tilpassa iOS Safari: enableHighAccuracy for GPS-chip, lang timeout for kald start,
-// maximumAge 0 for å tvinge fresh fix (viktig når du går mellom slag).
+/**
+ * Hentar gjeldande GPS-posisjon med høg presisjon.
+ *
+ * Tilpassa iOS Safari sine eigenheiter:
+ * - enableHighAccuracy for å bruke GPS-chipen (ikkje WiFi/celletriangulering)
+ * - Lang timeout for kald start (GPS kan trenge 10-30s for fyrste fix)
+ * - maximumAge 0 for å tvinge fresh fix (viktig når ein går mellom slag)
+ *
+ * Kastar feil med norsk melding på vanlege problem (HTTPS, løyve, timeout).
+ *
+ * @returns {Promise<{lat: number, lon: number, accuracy: number}>} GPS-posisjon med presisjon i meter
+ * @throws {Error} Norsk feilmelding viss GPS feilar eller manglar løyve
+ */
 function getCurrentGPSPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -493,6 +587,16 @@ function getCurrentGPSPosition() {
 // Sett inn URL-en frå Google Apps Script her:
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyemoX3aH6vuz_1ZqbC4HyjBd3zmICQnWmb1OZQV-O3Kd5wnsT2CjIhrReMmqaBVu-F/exec";
 
+/**
+ * Sender ferdig runde til Google Sheets via Apps Script-endepunkt.
+ *
+ * Brukar `mode: "no-cors"` fordi Apps Script ikkje set CORS-headers — det betyr
+ * at vi ikkje kan lese responsen, så vi går ut i frå suksess viss ingen feil
+ * vart kasta. For ekte feedback må Apps Script-endepunktet utviklast vidare.
+ *
+ * @param {Object} roundData - Runde-objekt med dato, hol, slag, kurs, etc.
+ * @returns {Promise<{ok: boolean, error?: string}>} Status-objekt
+ */
 async function sendToSheets(roundData) {
   if (!SHEETS_URL) return { ok: false, error: "Ingen URL" };
   try {
@@ -509,6 +613,29 @@ async function sendToSheets(roundData) {
 }
 
 // ─── Leaflet Map Component ───
+/**
+ * Hovudkartet — viser holet med tee, green, slag, dispersjonsellipse og brukar-GPS.
+ *
+ * Brukar Leaflet med tre kartlag (OSM, satellitt, topo) som brukaren kan veksle mellom.
+ * Sentrerer kartet automatisk på spelaren ved kvart hol/slag.
+ *
+ * @param {Object} props
+ * @param {number} props.currentHole - Gjeldande hol-nummer (1-18 eller 1-9)
+ * @param {{lat: number, lon: number}|null} props.lastPos - Siste registrerte ball-posisjon
+ * @param {Function} props.onPlaceBall - Callback når brukaren tappar på kartet for å plassere ball
+ * @param {Array} props.currentShots - Slag på gjeldande hol
+ * @param {Array} props.holes - Ferdigspela hol med slag
+ * @param {Array<{lat: number, lon: number}>} props.teePositions - Tee-koordinatar
+ * @param {Array<{lat: number, lon: number}>} props.greenPositions - Green-koordinatar
+ * @param {boolean} props.calibrateMode - Viss true: tap på kart kalibrerer green-posisjon
+ * @param {string|null} props.calibrateStep - "green" når kalibrering ventar på tap
+ * @param {Function} props.onCalibrateTap - Callback for kalibreringstap
+ * @param {string|null} props.selectedClub - Vald kølle (styrer dispersjonsellipse)
+ * @param {{lat: number, lon: number}|null} props.aimPoint - Manuell sikteretning (overstyrer auto)
+ * @param {{lat: number, lon: number, accuracy: number}|null} props.userPosition - Spelaren sin GPS
+ * @param {{lat: number, lon: number}} props.courseCenter - Senterpunkt for initial kart-zoom
+ * @param {Array<Array<{lat: number, lon: number, elev?: number}>>} props.holeIntermediates - Dogleg-noder per hol
+ */
 function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePositions, greenPositions, calibrateMode, calibrateStep, onCalibrateTap, selectedClub, aimPoint, userPosition, courseCenter, holeIntermediates }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -521,7 +648,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
   //   1. Manuell aim-point (🎯-knappen) overstyrer alt.
   //   2. Elles: dynamisk OSM hole-line via findNextAimTarget — siktar mot
   //      neste relevante mellomnoden (kneepunkt på dogleg) dersom spelaren er
-  //      klart framom noden OG vinkelen er signifikant (≥15°). Elles green.
+  //      klart framom noden OG vinkelen er signifikant (≥10°). Elles green.
   //   3. Fallback: greenPos.
   // Algoritmen (buffer + vinkelsjekk) løyser hol 6-bugen frå 11.05.2026:
   // frå fairway 164m → node 152m frå green: 164 ≤ 177 (buffer) → sikt green ✓.
@@ -780,6 +907,18 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
 }
 
 // ─── Report Builder ───
+/**
+ * Byggjer ein komplett HTML-rapport for ein ferdig runde.
+ * Rapporten inkluderer scorekort, slag-detaljar per hol, dispersjonsstatistikk,
+ * og kølle-bruk-oversikt. Returnert HTML er sjølvstendig (alle CSS inline).
+ *
+ * @param {Array<{hole: number, shots: Array}>} reportHoles - Hol med slag
+ * @param {string} tee - "yellow" eller "red"
+ * @param {Array<{lat: number, lon: number}>} teePositions - Tee-koordinatar
+ * @param {Array<{lat: number, lon: number}>} greenPositions - Green-koordinatar
+ * @param {Array<{hole: number, par: number, index: number, yellowM: number, redM: number}>} courseData - Bane-info
+ * @returns {string} Komplett HTML-dokument som kan lastast ned
+ */
 function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData) {
   const date = new Date().toLocaleDateString("nb-NO", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const rScore = reportHoles.reduce((s, h) => s + h.shots.length, 0);
@@ -867,6 +1006,17 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseD
 }
 
 // ─── Scorecard ───
+/**
+ * Scorekort-visning for ein runde. Tilpassar layout etter bane:
+ * 9-hols bane (Sandane) viser éin rad, 18-hols (Sunnfjord) viser ut/inn.
+ *
+ * @param {Object} props
+ * @param {Array<{hole: number, shots: Array}>} props.holes - Ferdigspela hol
+ * @param {number} props.currentHole - Aktivt hol (uthevast)
+ * @param {Array} props.currentShots - Slag på aktivt hol (for live-visning)
+ * @param {string} props.tee - "yellow" eller "red"
+ * @param {Array} props.courseData - Bane-info (9 eller 18 element)
+ */
 function Scorecard({ holes, currentHole, currentShots, tee, courseData }) {
   const getScore = n => { const f = holes.find(h => h.hole === n); return f ? f.shots.length : null; };
   const scoreClr = (s, p) => { if (s == null) return "#ccc"; const d = s-p; return d<=-2?"#b8860b":d===-1?"#cc0000":d===0?"#0066cc":d===1?"#666":"#444"; };
@@ -908,6 +1058,16 @@ function Scorecard({ holes, currentHole, currentShots, tee, courseData }) {
 }
 
 // ─── ReportItem ───
+/**
+ * Komponent som viser éin lagra rapport i historikk-fanen.
+ * Støttar deling (via Web Share API) og sletting av rapporten.
+ *
+ * @param {Object} props
+ * @param {Object} props.report - Rapport-objekt med dato, score, html, etc.
+ * @param {number} props.index - Indeks i savedReports-arrayet
+ * @param {Array} props.savedReports - Heile rapport-lista
+ * @param {Function} props.setSavedReports - Setter for å oppdatere lista
+ */
 function ReportItem({ report: r, index: i, savedReports, setSavedReports }) {
   const [showShareText, setShowShareText] = useState(false);
   const handleDelete = async () => {
@@ -944,6 +1104,20 @@ function ReportItem({ report: r, index: i, savedReports, setSavedReports }) {
 }
 
 // ─── Hovudapp ───
+/**
+ * Hovudkomponent for GolfBallTracker.
+ *
+ * Inneheld all state for ein pågåande runde og koordinerer:
+ * - Slagregistrering (kølle → kart-tap → ball-posisjon)
+ * - Caddie-forslag basert på avstand og høgde
+ * - Manuell og automatisk sikteretning (dogleg-noder)
+ * - Bane-veksling (Sunnfjord 18-hols / Sandane 9-hols)
+ * - Persistering til localStorage og Google Sheets
+ * - Rapport-generering ved fullført runde
+ *
+ * Vis-modus styrast av `view`-state: "play" (spel), "history" (rapportar),
+ * "calibrate" (kalibrer green-posisjonar).
+ */
 function GolfShotTracker() {
   const [holes, setHoles] = useState([]);
   const [currentHole, setCurrentHole] = useState(1);

@@ -24,24 +24,24 @@ const { useState, useRef, useEffect, useCallback } = React;
 
 // ─── Banedata Sunnfjord Golfklubb (oppdatert 2025) ───
 const COURSE_DATA = [
-  { hole: 1,  par: 4, index: 17, yellowM: 222, redM: 172 },
-  { hole: 2,  par: 5, index: 5,  yellowM: 382, redM: 355 },
-  { hole: 3,  par: 3, index: 15, yellowM: 127, redM: 106 },
-  { hole: 4,  par: 5, index: 3,  yellowM: 372, redM: 320 },
-  { hole: 5,  par: 4, index: 9,  yellowM: 248, redM: 210 },
-  { hole: 6,  par: 4, index: 1,  yellowM: 312, redM: 268 },
-  { hole: 7,  par: 3, index: 11, yellowM: 103, redM: 80 },
-  { hole: 8,  par: 4, index: 13, yellowM: 218, redM: 167 },
-  { hole: 9,  par: 4, index: 7,  yellowM: 266, redM: 212 },
-  { hole: 10, par: 4, index: 18, yellowM: 204, redM: 195 },
-  { hole: 11, par: 4, index: 2,  yellowM: 274, redM: 260 },
-  { hole: 12, par: 3, index: 14, yellowM: 147, redM: 127 },
-  { hole: 13, par: 5, index: 4,  yellowM: 352, redM: 281 },
-  { hole: 14, par: 4, index: 12, yellowM: 245, redM: 243 },
-  { hole: 15, par: 5, index: 6,  yellowM: 360, redM: 305 },
-  { hole: 16, par: 3, index: 10, yellowM: 117, redM: 116 },
-  { hole: 17, par: 4, index: 16, yellowM: 227, redM: 192 },
-  { hole: 18, par: 4, index: 8,  yellowM: 273, redM: 266 },
+  { hole: 1,  par: 4, index: 17, yellowM: 222 },
+  { hole: 2,  par: 5, index: 5,  yellowM: 382 },
+  { hole: 3,  par: 3, index: 15, yellowM: 127 },
+  { hole: 4,  par: 5, index: 3,  yellowM: 372 },
+  { hole: 5,  par: 4, index: 9,  yellowM: 248 },
+  { hole: 6,  par: 4, index: 1,  yellowM: 312 },
+  { hole: 7,  par: 3, index: 11, yellowM: 103 },
+  { hole: 8,  par: 4, index: 13, yellowM: 218 },
+  { hole: 9,  par: 4, index: 7,  yellowM: 266 },
+  { hole: 10, par: 4, index: 18, yellowM: 204 },
+  { hole: 11, par: 4, index: 2,  yellowM: 274 },
+  { hole: 12, par: 3, index: 14, yellowM: 147 },
+  { hole: 13, par: 5, index: 4,  yellowM: 352 },
+  { hole: 14, par: 4, index: 12, yellowM: 245 },
+  { hole: 15, par: 5, index: 6,  yellowM: 360 },
+  { hole: 16, par: 3, index: 10, yellowM: 117 },
+  { hole: 17, par: 4, index: 16, yellowM: 227 },
+  { hole: 18, par: 4, index: 8,  yellowM: 273 },
 ];
 const TOTAL_PAR = COURSE_DATA.reduce((s, h) => s + h.par, 0);
 
@@ -223,27 +223,6 @@ const TEE_POSITIONS_YELLOW = [
   { lat: 61.48477,  lon: 6.08488  }, // hol 18 — verifisert 13.05.2026
 ];
 
-const TEE_POSITIONS_RED = [
-  { lat: 61.48684, lon: 6.07938 },
-  { lat: 61.48568, lon: 6.07599 },
-  { lat: 61.48425, lon: 6.07955 },
-  { lat: 61.48385, lon: 6.07966 },
-  { lat: 61.48404, lon: 6.08213 },
-  { lat: 61.48211, lon: 6.08176 },
-  { lat: 61.48381, lon: 6.08384 },
-  { lat: 61.48275, lon: 6.08168 },
-  { lat: 61.48497, lon: 6.08402 },
-  { lat: 61.48699, lon: 6.07948 },
-  { lat: 61.48554, lon: 6.0768  },
-  { lat: 61.48402, lon: 6.07939 },
-  { lat: 61.48401, lon: 6.08019 },
-  { lat: 61.48441, lon: 6.0826  },
-  { lat: 61.48192, lon: 6.08126 },
-  { lat: 61.48416, lon: 6.08399 },
-  { lat: 61.48261, lon: 6.08136 },
-  { lat: 61.48477, lon: 6.08487 },
-];
-
 // Green-posisjonar — kalibrerte 22.04.2026 mot Norge i bilder (ortofoto).
 // 9-hols bane med 18 utslag: hol 1/10, 2/11, 3/12, ..., 9/18 deler same green.
 // Verdiane er lesne av frå greenens senter i Kartverkets ortofoto-teneste.
@@ -283,10 +262,6 @@ const DEFAULT_GREEN_POSITIONS = [
 const TEE_ELEVATIONS_YELLOW = [
   177.4, 175.8, 182.7, 183.6, 194.2, 201.0, 195.1, 196.1, 195.1,  // Tee gul  1–9
   180.6, 175.5, 181.7, 183.6, 194.2, 202.2, 195.2, 196.1, 192.7,  // Tee gul 10–18
-];
-const TEE_ELEVATIONS_RED = [
-  177.6, 175.4, 181.5, 182.8, 193.2, 202.2, 197.1, 195.8, 185.3,  // Tee raud  1–9
-  176.9, 175.4, 182.0, 184.7, 194.3, 202.4, 195.1, 196.2, 195.1,  // Tee raud 10–18
 ];
 const GREEN_ELEVATIONS = [
   176.5, 181.9, 179.1, 188.1, 190.3, 196.7, 200.7, 194.3, 182.7,  // Green hol  1–9
@@ -455,15 +430,15 @@ const COURSE_CENTER = { lat: 61.484238, lon: 6.080908 };
 // Ingen høgdedata — spel-avstand vises ikkje for Sandane.
 
 const COURSE_DATA_SANDANE = [
-  { hole: 1, par: 4, index: 5,  yellowM: 250, redM: 250 }, // placeholder par/index
-  { hole: 2, par: 4, index: 9,  yellowM: 128, redM: 128 },
-  { hole: 3, par: 4, index: 7,  yellowM: 156, redM: 156 },
-  { hole: 4, par: 4, index: 3,  yellowM: 131, redM: 131 },
-  { hole: 5, par: 4, index: 1,  yellowM: 176, redM: 176 },
-  { hole: 6, par: 4, index: 6,  yellowM: 267, redM: 267 },
-  { hole: 7, par: 4, index: 2,  yellowM: 270, redM: 270 },
-  { hole: 8, par: 3, index: 8,  yellowM: 91,  redM: 91  }, // kort hol — par 3
-  { hole: 9, par: 4, index: 4,  yellowM: 146, redM: 146 },
+  { hole: 1, par: 4, index: 5,  yellowM: 250 }, // placeholder par/index
+  { hole: 2, par: 4, index: 9,  yellowM: 128 },
+  { hole: 3, par: 4, index: 7,  yellowM: 156 },
+  { hole: 4, par: 4, index: 3,  yellowM: 131 },
+  { hole: 5, par: 4, index: 1,  yellowM: 176 },
+  { hole: 6, par: 4, index: 6,  yellowM: 267 },
+  { hole: 7, par: 4, index: 2,  yellowM: 270 },
+  { hole: 8, par: 3, index: 8,  yellowM: 91  }, // kort hol — par 3
+  { hole: 9, par: 4, index: 4,  yellowM: 146 },
 ];
 
 const TEE_POSITIONS_YELLOW_SANDANE = [
@@ -920,7 +895,7 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
  * @param {string} tee - "yellow" eller "red"
  * @param {Array<{lat: number, lon: number}>} teePositions - Tee-koordinatar
  * @param {Array<{lat: number, lon: number}>} greenPositions - Green-koordinatar
- * @param {Array<{hole: number, par: number, index: number, yellowM: number, redM: number}>} courseData - Bane-info
+ * @param {Array<{hole: number, par: number, index: number, yellowM: number}>} courseData - Bane-info
  * @returns {string} Komplett HTML-dokument som kan lastast ned
  */
 function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData) {
@@ -948,7 +923,7 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseD
     const hi = courseData[h.hole-1]; const sc = h.shots.length;
     const lbl = scoreLabel(sc, hi.par);
     const bg = sc < hi.par ? "#e6f9e6" : sc === hi.par ? "#e6f0ff" : sc === hi.par+1 ? "#fff8e6" : "#ffeded";
-    return `<tr style="background:${bg}"><td style="font-weight:600">${h.hole}${h.unfinished?" *":""}</td><td style="text-align:center">${hi.par}</td><td style="text-align:center">${hi.index}</td><td style="text-align:center">${tee==="yellow"?hi.yellowM:hi.redM}m</td><td style="text-align:center;font-weight:700">${sc}</td><td style="text-align:center">${h.unfinished?"Ufullført":lbl}</td></tr>`;
+    return `<tr style="background:${bg}"><td style="font-weight:600">${h.hole}${h.unfinished?" *":""}</td><td style="text-align:center">${hi.par}</td><td style="text-align:center">${hi.index}</td><td style="text-align:center">${hi.yellowM}m</td><td style="text-align:center;font-weight:700">${sc}</td><td style="text-align:center">${h.unfinished?"Ufullført":lbl}</td></tr>`;
   }).join("");
 
   const shotDetails = reportHoles.map(h => {
@@ -998,7 +973,7 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseD
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
     <style>body{font-family:Georgia,serif;color:#1a1a1a;max-width:700px;margin:0 auto;padding:20px 16px}h1{color:#2d5a3d;font-size:20px;margin-bottom:2px}h2{color:#2d5a3d;font-size:14px;border-bottom:2px solid #2d5a3d;padding-bottom:3px;margin-top:20px}h3{font-size:13px}table{width:100%;border-collapse:collapse}th,td{padding:4px 8px;border:1px solid #ddd;font-size:12px}th{background:#2d5a3d;color:white;font-size:11px}.summary{display:flex;gap:12px;margin:12px 0}.stat-box{background:#f4f7f5;border-radius:6px;padding:10px 14px;text-align:center;flex:1}.stat-box .num{font-size:24px;font-weight:300;color:#2d5a3d}.stat-box .lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.1em}</style></head><body>
     <h1>⛳ Sunnfjord Golfklubb</h1>
-    <p style="color:#666;margin:0 0 14px;font-size:13px">${date} · ${tee==="yellow"?"Gul":"Raud"} tee</p>
+    <p style="color:#666;margin:0 0 14px;font-size:13px">${date} · ${"Gul tee"}</p>
     <div class="summary"><div class="stat-box"><div class="num">${rScore}</div><div class="lbl">Slag</div></div><div class="stat-box"><div class="num">${diffStr}</div><div class="lbl">Par ${rPar}</div></div><div class="stat-box"><div class="num">${reportHoles.length}</div><div class="lbl">Hol</div></div></div>
     <h2>Scorekort</h2>
     <table><tr><th>Hol</th><th>Par</th><th>Idx</th><th>Lengde</th><th>Score</th><th>Resultat</th></tr>${holeRows}</table>
@@ -1050,7 +1025,7 @@ function Scorecard({ holes, currentHole, currentShots, tee, courseData }) {
   return (
     <div style={{ background: "#fff", borderRadius: 12, padding: "14px 10px", border: "2px solid #1a3a25" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1a3a25", fontWeight: 700 }}>Scorekort — {tee==="yellow"?"Gul tee":"Raud tee"}</span>
+        <span style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1a3a25", fontWeight: 700 }}>Scorekort — {"Gul tee"}</span>
         <span style={{ fontSize: 13, color: "#1a3a25", fontWeight: 700 }}>Par {totalPar}</span>
       </div>
       {isNineOnly
@@ -1130,17 +1105,18 @@ function GolfShotTracker() {
   const [step, setStep] = useState("club"); // "club" | "map"
   const [message, setMessage] = useState("");
   const [view, setView] = useState("play");
-  const [tee, setTee] = useState("red"); // Brukar startar med raud tee (nybegynnar)
+  // Tee er hardkoda til "yellow" — raud tee fjerna mai 2026 etter at brukaren
+  // gjekk over til gul tee permanent. Behaldt som konstant for bakoverkompatibilitet
+  // med sheets-data og rapport-format.
+  const tee = "yellow";
   // Kurs-val: "sunnfjord" eller "sandane". Lagra i localStorage.
   const [course, setCourse] = useState("sunnfjord");
 
   // Kurs-avhengige konstantar — bytt automatisk basert på vald bane.
   const courseData      = course === "sandane" ? COURSE_DATA_SANDANE            : COURSE_DATA;
   const teeYellow       = course === "sandane" ? TEE_POSITIONS_YELLOW_SANDANE   : TEE_POSITIONS_YELLOW;
-  const teeRed          = course === "sandane" ? TEE_POSITIONS_YELLOW_SANDANE   : TEE_POSITIONS_RED; // sandane: berre gul
   const defaultGreens   = course === "sandane" ? DEFAULT_GREEN_POSITIONS_SANDANE: DEFAULT_GREEN_POSITIONS;
   const teeElevsYellow  = course === "sandane" ? TEE_ELEVATIONS_YELLOW_SANDANE  : TEE_ELEVATIONS_YELLOW;
-  const teeElevsRed     = course === "sandane" ? TEE_ELEVATIONS_YELLOW_SANDANE  : TEE_ELEVATIONS_RED;
   const greenElevs      = course === "sandane" ? GREEN_ELEVATIONS_SANDANE       : GREEN_ELEVATIONS;
   const osmIntermediates= course === "sandane" ? OSM_HOLE_INTERMEDIATES_SANDANE : OSM_HOLE_INTERMEDIATES;
   const activeCourseCenter = course === "sandane" ? COURSE_CENTER_SANDANE       : COURSE_CENTER;
@@ -1155,7 +1131,7 @@ function GolfShotTracker() {
   // Avleia: kva hol-nummer er fyrste og siste i denne runden
   const startHole = loop === "front" ? 1 : 10;
   const endHole = loop === "front" ? 9 : 18;
-  const [lastPos, setLastPos] = useState(TEE_POSITIONS_RED[0]);
+  const [lastPos, setLastPos] = useState(TEE_POSITIONS_YELLOW[0]);
   const [inHole, setInHole] = useState(false);
   const [aimPoint, setAimPoint] = useState(null);
   const [aimMode, setAimMode] = useState(false); // true = neste trykk set siktepunkt // Manuelt siktepunkt for ellipse
@@ -1181,7 +1157,7 @@ function GolfShotTracker() {
 
   // Tee-posisjonar er no eit utleda val basert på vald tee-farge.
   // Begge sett er hardkoda konstantar (ortofoto-kalibrerte), ingen runtime-endring.
-  const teePositions = tee === "yellow" || course === "sandane" ? teeYellow : teeRed;
+  const teePositions = teeYellow;
 
   // Køller i fast logisk rekkjefølge (lengst → kortast, putter til slutt).
   // Tidlegare sortert etter bruksfrekvens, men då endra rekkjefølga seg over
@@ -1216,7 +1192,7 @@ function GolfShotTracker() {
         // ny (ingen aktiv runde) — aktiv runde overstyrer (sjå nedanfor).
         if (lp === "back") {
           setCurrentHole(10);
-          setLastPos(TEE_POSITIONS_RED[9]);
+          setLastPos(TEE_POSITIONS_YELLOW[9]);
         }
       }
     } catch(e){}
@@ -1259,7 +1235,7 @@ function GolfShotTracker() {
         if (d.loop === "front" || d.loop === "back") setLoop(d.loop);
         if (d.course === "sunnfjord" || d.course === "sandane") setCourse(d.course);
         setHoles(d.holes||[]); setCurrentHole(d.currentHole||1);
-        setCurrentShots(d.currentShots||[]); setTee(d.tee||"yellow");
+        setCurrentShots(d.currentShots||[]);
         if (d.currentShots?.length > 0) {
           const ls = d.currentShots[d.currentShots.length-1];
           setLastPos(ls.pos || teePositions[(d.currentHole||1)-1]);
@@ -1324,7 +1300,7 @@ function GolfShotTracker() {
 
   // Spel-avstand med høgdejustering (÷3-regelen: 3m stigning = +1m spel-avstand).
   // Brukar lineær interpolasjon for å estimere høgde på spelaren sin posisjon.
-  const teeElevations = tee === "yellow" ? teeElevsYellow : teeElevsRed;
+  const teeElevations = teeElevsYellow;
   const teeElev   = teeElevations[currentHole - 1];
   const greenElev = greenElevs[currentHole - 1];
   const teePos2   = teePositions[currentHole - 1]; // alias for bruk utanfor GolfMap
@@ -1519,7 +1495,7 @@ function GolfShotTracker() {
             hole: h.hole,
             par: courseData[h.hole-1].par,
             index: courseData[h.hole-1].index,
-            holeLength: tee === "yellow" ? courseData[h.hole-1].yellowM : courseData[h.hole-1].redM,
+            holeLength: courseData[h.hole-1].yellowM,
             shots: h.shots.length,
             diff: h.shots.length - courseData[h.hole-1].par,
             unfinished: h.unfinished || false,
@@ -1610,8 +1586,8 @@ function GolfShotTracker() {
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: "#888", fontFamily: NUM_FONT }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 2, background: tee==="yellow"?"#e6c200":"#cc0000", display: "inline-block", marginRight: 4, border: "1px solid rgba(0,0,0,0.2)" }} />
-                    {tee==="yellow"?holeInfo.yellowM:holeInfo.redM}m
+                    <span style={{ width: 10, height: 10, borderRadius: 2, background: "#e6c200", display: "inline-block", marginRight: 4, border: "1px solid rgba(0,0,0,0.2)" }} />
+                    {holeInfo.yellowM}m
                   </div>
                   {distToHole != null && (
                     <div style={{ fontSize: 22, color: "#2d8a4e", fontWeight: 800, marginTop: 2, fontFamily: NUM_FONT, lineHeight: 1.1 }}>
@@ -1623,16 +1599,6 @@ function GolfShotTracker() {
                       )}
                     </div>
                   )}
-                  <button onClick={()=>{
-                    const newTee = tee === "yellow" ? "red" : "yellow";
-                    setTee(newTee);
-                    if (currentShots.length === 0) {
-                      const newTeePos = newTee === "yellow" ? teeYellow : teeRed;
-                      setLastPos(newTeePos[currentHole - 1]);
-                    }
-                  }} style={{ fontSize: 11, color: "#1a3a25", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2, textDecoration: "underline", fontWeight: 600 }}>
-                    {course === "sandane" ? "Gul tee" : "Byt tee"}
-                  </button>
                 </div>
               </div>
             )}
@@ -2087,7 +2053,6 @@ function GolfShotTracker() {
                     const newStartHole = 1;
                     setCurrentHole(newStartHole);
                     setLoop("front");
-                    if (id === "sandane") setTee("yellow");
                     try { localStorage.setItem("golf-course", id); } catch(e){}
                   }} style={{
                     flex:1, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:700,

@@ -796,8 +796,8 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
           trackman.carry, trackman.carryStd, trackman.side, trackman.sideStd
         );
         const ellipse = L.polygon(ellipsePoints, {
-          color: "#e67300", fillColor: "#e67300", fillOpacity: 0.12,
-          weight: 2, dashArray: "6,4", interactive: false,
+          color: "#e67300", fillColor: "#e67300", fillOpacity: 0.22,
+          weight: 3, dashArray: "6,4", interactive: false,
         }).addTo(map);
         markersRef.current.push(ellipse);
 
@@ -808,15 +808,15 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
           lon: centerPt.lon + (trackman.side * Math.sin(bearing)) / mPerDegLon,
         };
         const cm = L.circleMarker([adjustedCenter.lat, adjustedCenter.lon], {
-          radius: 4, color: "#e67300", fillColor: "#e67300", fillOpacity: 0.8, weight: 1, interactive: false,
+          radius: 5, color: "#fff", fillColor: "#e67300", fillOpacity: 1, weight: 2, interactive: false,
         }).addTo(map);
         markersRef.current.push(cm);
 
-        // Label
+        // Label — kølle + carry, tydeleg med bakgrunn
         const label = L.marker([adjustedCenter.lat, adjustedCenter.lon], {
           icon: L.divIcon({
-            html: `<div style="font-size:10px;font-weight:700;color:#e67300;text-shadow:1px 1px 1px #fff,-1px -1px 1px #fff;white-space:nowrap;pointer-events:none">Carry ${trackman.carry}m</div>`,
-            iconSize: [60, 14], className: '', iconAnchor: [30, -6],
+            html: `<div style="font-size:12px;font-weight:800;color:#fff;background:#e67300;padding:2px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,0.3)">${selectedClub} · ${trackman.carry}m</div>`,
+            iconSize: [80, 18], className: '', iconAnchor: [40, -8],
           }), interactive: false,
         }).addTo(map);
         markersRef.current.push(label);
@@ -1573,11 +1573,11 @@ function GolfShotTracker() {
         {/* PLAY VIEW */}
         {view === "play" && (
           <>
-            {/* Hol-info */}
+            {/* Hol-info — kompakt kontekst (hol/par/index/teelengd) */}
             {holeInfo && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", marginBottom: 10, background: "#fff", borderRadius: 12, border: "2px solid #1a3a25" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", marginBottom: 8, background: "#fff", borderRadius: 12, border: "2px solid #1a3a25" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: "#1a3a25", fontFamily: NUM_FONT }}>Hol {currentHole}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: "#1a3a25", fontFamily: NUM_FONT }}>Hol {currentHole}</div>
                   <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Index {holeInfo.index}</div>
                 </div>
                 <div style={{ textAlign: "center", padding: "0 10px" }}>
@@ -1589,19 +1589,53 @@ function GolfShotTracker() {
                     <span style={{ width: 10, height: 10, borderRadius: 2, background: "#e6c200", display: "inline-block", marginRight: 4, border: "1px solid rgba(0,0,0,0.2)" }} />
                     {holeInfo.yellowM}m
                   </div>
-                  {distToHole != null && (
-                    <div style={{ fontSize: 22, color: "#2d8a4e", fontWeight: 800, marginTop: 2, fontFamily: NUM_FONT, lineHeight: 1.1 }}>
-                      ⛳ {distToHole}m
-                      {playsLike != null && playsLike !== distToHole && (
-                        <span style={{ marginLeft: 6, color: "#666", fontWeight: 600, fontSize: 13 }}>
-                          spel {playsLike}m {elevDiffToGreen > 0 ? "↗" : "↘"}
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
+
+            {/* ─── NESTE SLAG-BOKS ─── Den viktigaste informasjonen, samla og stor.
+                Viser: avstand til flagg (stort), kølleforslag, og treffsone.
+                Synleg berre når vi ikkje er på green (step==="club" og ikkje putt-modus). */}
+            {holeInfo && step === "club" && !showPuttPicker && distToHole != null && (() => {
+              // Bestem vist kølle: følg caddie-blading (caddieIndex) eller auto-forslag.
+              const caddieTarget = playsLike ?? distToHole;
+              const autoClub = findNearestClub(caddieTarget);
+              const shownIdx = caddieMode && !showAllClubs && caddieIndex !== null
+                ? caddieIndex : caddieIndexOf(autoClub);
+              const shownClub = CADDIE_CLUBS[shownIdx] || autoClub;
+              const disp = CLUB_DISPERSION[shownClub];
+              const hasElev = playsLike != null && playsLike !== distToHole;
+              return (
+                <div style={{ background: "#1a3a25", borderRadius: 14, padding: "16px 18px", marginBottom: 8, color: "#fff" }}>
+                  {/* Avstand til flagg */}
+                  <div style={{ textAlign: "center", marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>Avstand til flagg</div>
+                    <div style={{ fontSize: 52, fontWeight: 800, color: "#fff", fontFamily: NUM_FONT, lineHeight: 1.0, marginTop: 2 }}>
+                      {hasElev ? playsLike : distToHole}<span style={{ fontSize: 24, fontWeight: 600 }}>m</span>
+                    </div>
+                    {hasElev && (
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 600, marginTop: 2, fontFamily: NUM_FONT }}>
+                        {distToHole}m flatt · {elevDiffToGreen > 0 ? "↗ spelar opp" : "↘ spelar ned"}
+                      </div>
+                    )}
+                  </div>
+                  {/* Kølleforslag */}
+                  <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>
+                        {caddieMode && caddieIndex !== null ? "Vald kølle" : "Foreslått"}
+                      </div>
+                      <div style={{ fontSize: 34, fontWeight: 800, color: "#ffd24a", fontFamily: NUM_FONT, lineHeight: 1.05 }}>{shownClub}</div>
+                      {disp && (
+                        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 600, marginTop: 2, fontFamily: NUM_FONT }}>
+                          carry {disp.carry}m · ±{Math.round(disp.sideStd)}m sideveis
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Loop-veljar: berre synleg for Sunnfjord (delt bane) og før første slag */}
             {hasLoop && holes.length === 0 && currentShots.length === 0 && (
@@ -1882,8 +1916,9 @@ function GolfShotTracker() {
                     Alle-modus: grid med alle 9 køller (klassisk visning). */}
                 {(caddieMode && !showAllClubs) ? (() => {
                   // Bestem foreslått kølle: caddieIndex viss sett (manuell blading),
-                  // elles automatisk basert på distToHole.
-                  const target = distToHole != null ? distToHole : null;
+                  // elles automatisk basert på spel-avstand (playsLike) med flat
+                  // avstand som fallback — konsistent med useEffect og neste slag-boks.
+                  const target = playsLike ?? distToHole;
                   const autoClub = target != null ? findNearestClub(target) : "Driver";
                   const idx = caddieIndex !== null ? caddieIndex : caddieIndexOf(autoClub);
                   const club = CADDIE_CLUBS[idx];

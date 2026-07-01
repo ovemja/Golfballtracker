@@ -1131,6 +1131,17 @@ function GolfShotTracker() {
   // Avleia: kva hol-nummer er fyrste og siste i denne runden
   const startHole = loop === "front" ? 1 : 10;
   const endHole = loop === "front" ? 9 : 18;
+  // Rundestart-gate: styrer om ein eigen startskjerm (front/back9-val) vert vist
+  // i staden for spele-visninga. Sett til true når brukaren trykkjer "Start runde"
+  // (eller ved gjenoppretting av pågåande runde). Nullstillast ved avslutta/
+  // forkasta runde og ved bane-byte, slik at startskjermen dukkar opp att.
+  const [roundStarted, setRoundStarted] = useState(false);
+  const showStartScreen = hasLoop && !roundStarted && holes.length === 0 && currentShots.length === 0;
+  // Kollapsande header: krympar til ei tynn linje når brukaren scrollar forbi
+  // ein liten terskel, slik at meir av skjermen (kart, kølleval) blir synleg
+  // utan scrolling. Headeren er sticky (position: sticky) slik at han blir
+  // verande synleg i krympa form i staden for å scrolle heilt bort.
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [lastPos, setLastPos] = useState(TEE_POSITIONS_YELLOW[0]);
   const [inHole, setInHole] = useState(false);
   const [aimPoint, setAimPoint] = useState(null);
@@ -1241,8 +1252,17 @@ function GolfShotTracker() {
           setLastPos(ls.pos || teePositions[(d.currentHole||1)-1]);
         } else { setLastPos(teePositions[(d.currentHole||1)-1]); }
         setMessage("♻️ Pågåande runde henta opp att");
+        setRoundStarted(true);
       }
     } catch(e){}
+  }, []);
+
+  // Scroll-lyttar for kollapsande header. Passiv listener for ytelse.
+  // Terskel på 24px gir rask respons utan å "flimre" ved små scroll-justeringar.
+  useEffect(() => {
+    const onScroll = () => setHeaderCollapsed(window.scrollY > 24);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   // Kontinuerleg GPS-sporing i spele-modus. Startar watchPosition slik at
@@ -1530,6 +1550,7 @@ function GolfShotTracker() {
 
       setHoles([]); setCurrentHole(startHole); setCurrentShots([]); setSelectedClub(null); setCaddieIndex(null);
       setStep("club"); setLastPos(teePositions[startHole - 1]); setInHole(false); setConfirmFinish(false); setConfirmStraff(false); setAimPoint(null); setAimMode(false);
+      setRoundStarted(false);
       setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
     } finally {
       // Slipp vakta uansett — også viss noko kasta unntak undervegs.
@@ -1541,13 +1562,23 @@ function GolfShotTracker() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#f5f5f0", fontFamily: "'Georgia', serif", color: "#1a1a1a" }}>
-      {/* Header */}
-      <div style={{ background: "#1a3a25", padding: "16px 14px 12px", borderBottom: "3px solid #c8b48c" }}>
+      {/* Header — sticky, krympar til ei tynn linje ved scroll (headerCollapsed)
+          slik at meir av innhaldet under blir synleg utan å måtte scrolle. */}
+      <div style={{
+        background: "#1a3a25",
+        padding: headerCollapsed ? "8px 14px" : "16px 14px 12px",
+        borderBottom: "3px solid #c8b48c",
+        position: "sticky", top: 0, zIndex: 5000,
+        transition: "padding 0.15s ease",
+      }}>
         <div style={{ maxWidth: 520, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#fff" }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</h1>
-              <p style={{ margin: "2px 0 0", fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 600, fontFamily: NUM_FONT }}>
+              {!headerCollapsed && (
+                <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#fff" }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</h1>
+              )}
+              <p style={{ margin: headerCollapsed ? 0 : "2px 0 0", fontSize: headerCollapsed ? 15 : 13, color: "rgba(255,255,255,0.7)", fontWeight: 600, fontFamily: NUM_FONT }}>
+                {headerCollapsed && <span style={{ color: "#fff", fontWeight: 800, marginRight: 8 }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</span>}
                 Hol {currentHole}/{endHole}
                 {loop === "back" && hasLoop && <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 4 }}>(back)</span>}
                 {holes.length > 0 && <span style={{ color: scoreDiff>0?"#ff8a8a":scoreDiff<0?"#8eff8e":"#8ad4ff", marginLeft: 8 }}>{scoreDiff>0?`+${scoreDiff}`:scoreDiff===0?"E":scoreDiff}</span>}
@@ -1556,9 +1587,10 @@ function GolfShotTracker() {
             <div style={{ display: "flex", gap: 4 }}>
               {[{key:"play",icon:"🏌️"},{key:"reports",icon:"📄"},{key:"calibrate",icon:"⚙️"}].map(tab => (
                 <button key={tab.key} onClick={()=>setView(tab.key)} style={{
-                  width: 38, height: 38, borderRadius: 8, border: "none",
+                  width: headerCollapsed ? 30 : 38, height: headerCollapsed ? 30 : 38, borderRadius: 8, border: "none",
                   background: view===tab.key?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",
-                  fontSize: 17, cursor: "pointer", outline: view===tab.key?"2px solid #fff":"none", position: "relative",
+                  fontSize: headerCollapsed ? 14 : 17, cursor: "pointer", outline: view===tab.key?"2px solid #fff":"none", position: "relative",
+                  transition: "width 0.15s ease, height 0.15s ease",
                 }}>
                   {tab.icon}
                   {tab.key==="reports"&&savedReports.length>0&&<span style={{ position: "absolute", top: -3, right: -3, width: 16, height: 16, borderRadius: "50%", background: "#ff6b6b", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{savedReports.length}</span>}
@@ -1573,6 +1605,43 @@ function GolfShotTracker() {
         {/* PLAY VIEW */}
         {view === "play" && (
           <>
+            {/* ─── STARTSKJERM ─── Vises éin gong før runda startar (berre for
+                Sunnfjord, som har front/back9-loop). Erstattar heile spele-
+                visninga slik at front/back9-valet ikkje tek fast plass under
+                aktiv spel. Forsvinn for godt når "Start runde" er trykt, til
+                runda er avslutta/forkasta eller bane er bytt. */}
+            {showStartScreen && (
+              <div style={{ background: "#fff", border: "2px solid #1a3a25", borderRadius: 14, padding: "28px 20px", textAlign: "center" }}>
+                <div style={{ fontSize: 13, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", fontWeight: 700, marginBottom: 6 }}>Klar til å starte runde</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#1a3a25", marginBottom: 22, fontFamily: NUM_FONT }}>Sunnfjord GK</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                  {[{ id: "front", label: "Front 9", sub: "Hol 1–9" }, { id: "back", label: "Back 9", sub: "Hol 10–18" }].map(o => (
+                    <button key={o.id} onClick={() => {
+                      setLoop(o.id);
+                      const newStartHole = o.id === "front" ? 1 : 10;
+                      setCurrentHole(newStartHole);
+                      setLastPos(teePositions[newStartHole - 1]);
+                      try { localStorage.setItem("golf-loop", o.id); } catch (e) {}
+                    }} style={{
+                      flex: 1, padding: "16px 10px", borderRadius: 10, cursor: "pointer",
+                      background: loop === o.id ? "#1a3a25" : "#fff",
+                      border: loop === o.id ? "2px solid #1a3a25" : "2px solid #ccc",
+                      color: loop === o.id ? "#fff" : "#666",
+                    }}>
+                      <div style={{ fontSize: 17, fontWeight: 800, fontFamily: NUM_FONT }}>{o.label}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8, marginTop: 2, fontFamily: NUM_FONT }}>{o.sub}</div>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setRoundStarted(true)} style={{
+                  width: "100%", padding: "16px", background: "#ffd24a", border: "none",
+                  borderRadius: 10, color: "#1a3a25", fontSize: 17, fontWeight: 800, cursor: "pointer",
+                }}>Start runde →</button>
+              </div>
+            )}
+
+            {!showStartScreen && (
+            <>
             {/* Hol-info — tynn éi-linje-stripe (hol/par/index/teelengd) */}
             {holeInfo && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap", padding: "8px 14px", marginBottom: 8, background: "#fff", borderRadius: 10, border: "2px solid #1a3a25", fontFamily: NUM_FONT }}>
@@ -1661,31 +1730,6 @@ function GolfShotTracker() {
                 </div>
               );
             })()}
-
-            {/* Loop-veljar: berre synleg for Sunnfjord (delt bane) og før første slag */}
-            {hasLoop && holes.length === 0 && currentShots.length === 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", marginBottom: 10, background: "#fff", borderRadius: 10, border: "2px solid #c8b48c" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Du startar med:</div>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: "#1a3a25" }}>
-                    {loop === "front" ? "Front 9 (hol 1–9)" : "Back 9 (hol 10–18)"}
-                  </div>
-                </div>
-                <button onClick={()=>{
-                  const newLoop = loop === "front" ? "back" : "front";
-                  const newStartHole = newLoop === "front" ? 1 : 10;
-                  setLoop(newLoop);
-                  setCurrentHole(newStartHole);
-                  setLastPos(teePositions[newStartHole - 1]);
-                  try { localStorage.setItem("golf-loop", newLoop); } catch(e){}
-                }} style={{
-                  padding: "10px 14px", background: "#1a3a25", border: "none",
-                  borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer",
-                }}>
-                  Byt til {loop === "front" ? "Back 9" : "Front 9"}
-                </button>
-              </div>
-            )}
 
             {/* Melding */}
             {message && <div style={{ background: "#e8f5e9", border: "2px solid #4a8c5c", borderRadius: 10, padding: "12px 16px", marginBottom: 10, fontSize: 15, lineHeight: 1.5, color: "#1a3a25", fontWeight: 600 }}>{message}</div>}
@@ -1998,6 +2042,8 @@ function GolfShotTracker() {
             {currentShots.length > 0 && step === "club" && (
               <button onClick={undoLast} style={{ width: "100%", marginTop: 10, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 10, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>↩ Angre siste slag</button>
             )}
+            </>
+            )}
           </>
         )}
 
@@ -2034,7 +2080,7 @@ function GolfShotTracker() {
                     setStep("club"); setLastPos(teePositions[startHole-1]);
                     setInHole(false); setConfirmFinish(false); setConfirmDiscard(false);
                     setConfirmStraff(false); setAimPoint(null); setAimMode(false);
-                    setShowPickup(false); setShowPuttPicker(false);
+                    setShowPickup(false); setShowPuttPicker(false); setRoundStarted(false);
                     try { localStorage.removeItem(`golf-${course}-active-round`); } catch(e){}
                     setMessage("🗑 Runde forkasta");
                   }} style={{flex:2,padding:"14px",background:"#666",border:"2px solid #666",borderRadius:8,color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer"}}>🗑 Forkast runde</button>
@@ -2061,6 +2107,7 @@ function GolfShotTracker() {
                     const newStartHole = 1;
                     setCurrentHole(newStartHole);
                     setLoop("front");
+                    setRoundStarted(false);
                     try { localStorage.setItem("golf-course", id); } catch(e){}
                   }} style={{
                     flex:1, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:700,

@@ -1105,6 +1105,16 @@ function GolfShotTracker() {
   const [step, setStep] = useState("club"); // "club" | "map"
   const [message, setMessage] = useState("");
   const [view, setView] = useState("play");
+  // Caddie-modus-state. Flytta hit 06.07.2026: auto-forslag-useEffecten lenger
+  // nede refererer desse i dependency-arrayet sitt, som blir evaluert ved
+  // render — før deklarasjonane stod. Det fungerte berre fordi Babel
+  // transpilerer const til var (ingen TDZ). No er rekkjefølgja robust.
+  const [caddieMode, setCaddieMode] = useState(true); // true = caddie, false = full grid
+  const [caddieIndex, setCaddieIndex] = useState(null); // null = bruk auto-forslag, tal = manuelt valt
+  const [showAllClubs, setShowAllClubs] = useState(false); // mellombels override for "Vis alle"
+  // Utvida runde: front 9 er fullført på Sunnfjord og brukaren valde å halde
+  // fram på back 9 i same runde (18 hol, éin rapport). Lagt til 06.07.2026.
+  const [extendedTo18, setExtendedTo18] = useState(false);
   // Tee er hardkoda til "yellow" — raud tee fjerna mai 2026 etter at brukaren
   // gjekk over til gul tee permanent. Behaldt som konstant for bakoverkompatibilitet
   // med sheets-data og rapport-format.
@@ -1130,20 +1140,12 @@ function GolfShotTracker() {
   const [loop, setLoop] = useState("front");
   // Avleia: kva hol-nummer er fyrste og siste i denne runden
   const startHole = loop === "front" ? 1 : 10;
-  const endHole = loop === "front" ? 9 : 18;
-  // Rundestart-gate: styrer om ein eigen startskjerm (front/back9-val) vert vist
-  // i staden for spele-visninga. Sett til true når brukaren trykkjer "Start runde"
-  // (eller ved gjenoppretting av pågåande runde). Nullstillast ved avslutta/
-  // forkasta runde og ved bane-byte, slik at startskjermen dukkar opp att.
-  const [roundStarted, setRoundStarted] = useState(false);
-  const showStartScreen = hasLoop && !roundStarted && holes.length === 0 && currentShots.length === 0;
-  // Kollapsande header: krympar til ei tynn linje når brukaren scrollar forbi
-  // ein liten terskel, slik at meir av skjermen (kart, kølleval) blir synleg
-  // utan scrolling. Headeren er sticky (position: sticky) slik at han blir
-  // verande synleg i krympa form i staden for å scrolle heilt bort.
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  // Siste hol i runden: back 9 endar alltid på 18. Front 9 endar på 9, med
+  // mindre brukaren har valt å halde fram på back 9 (extendedTo18, Sunnfjord).
+  const endHole = loop === "back" ? 18 : (extendedTo18 ? 18 : 9);
   const [lastPos, setLastPos] = useState(TEE_POSITIONS_YELLOW[0]);
-  const [inHole, setInHole] = useState(false);
+  // inHole-state fjerna 06.07.2026 — daud kode. Ingenting sette han til true
+  // etter at putt-picker og chip-in tok over hole-out-flyten.
   const [aimPoint, setAimPoint] = useState(null);
   const [aimMode, setAimMode] = useState(false); // true = neste trykk set siktepunkt // Manuelt siktepunkt for ellipse
   const [savedReports, setSavedReports] = useState([]);
@@ -1245,6 +1247,7 @@ function GolfShotTracker() {
         // Gjenopprett loop først, slik at downstream-effektar (lastPos, m.m.) blir rette
         if (d.loop === "front" || d.loop === "back") setLoop(d.loop);
         if (d.course === "sunnfjord" || d.course === "sandane") setCourse(d.course);
+        if (d.extendedTo18) setExtendedTo18(true);
         setHoles(d.holes||[]); setCurrentHole(d.currentHole||1);
         setCurrentShots(d.currentShots||[]);
         if (d.currentShots?.length > 0) {
@@ -1252,17 +1255,8 @@ function GolfShotTracker() {
           setLastPos(ls.pos || teePositions[(d.currentHole||1)-1]);
         } else { setLastPos(teePositions[(d.currentHole||1)-1]); }
         setMessage("♻️ Pågåande runde henta opp att");
-        setRoundStarted(true);
       }
     } catch(e){}
-  }, []);
-
-  // Scroll-lyttar for kollapsande header. Passiv listener for ytelse.
-  // Terskel på 24px gir rask respons utan å "flimre" ved små scroll-justeringar.
-  useEffect(() => {
-    const onScroll = () => setHeaderCollapsed(window.scrollY > 24);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   // Kontinuerleg GPS-sporing i spele-modus. Startar watchPosition slik at
@@ -1302,16 +1296,20 @@ function GolfShotTracker() {
   useEffect(() => {
     try {
       if (holes.length > 0 || currentShots.length > 0) {
-        localStorage.setItem(`golf-${course}-active-round`, JSON.stringify({ holes, currentHole, currentShots, tee, loop, course }));
+        localStorage.setItem(`golf-${course}-active-round`, JSON.stringify({ holes, currentHole, currentShots, tee, loop, course, extendedTo18 }));
       } else { localStorage.removeItem(`golf-${course}-active-round`); }
     } catch(e){}
-  }, [holes, currentHole, currentShots, tee]);
+  }, [holes, currentHole, currentShots, tee, extendedTo18]);
 
   const holeInfo = courseData[currentHole - 1];
   const greenPos = greenPositions[currentHole - 1];
   const totalScore = holes.reduce((s,h) => s + h.shots.length, 0);
   const totalPar = holes.reduce((s,h) => s + courseData[h.hole-1].par, 0);
   const scoreDiff = totalScore - totalPar;
+  // Runden er fullført når currentHole har passert siste hol. Då viser
+  // Play-fana eit «Runde fullført»-panel i staden for slagregistrering,
+  // i staden for den gamle «Hol 10/9»-tilstanden. Lagt til 06.07.2026.
+  const roundComplete = currentHole > endHole && holes.length > 0;
 
   // Avstand frå siste posisjon til green
   const distToHole = lastPos && greenPos
@@ -1339,6 +1337,7 @@ function GolfShotTracker() {
   useEffect(() => {
     if (!caddieMode || showAllClubs) return;
     if (step !== "club") return;
+    if (roundComplete) return; // fullført runde — ikkje foreslå kølle frå neste tee
     if (caddieIndex !== null) return; // brukaren har bla manuelt — ikkje overskriv
     // Bruk spel-avstand (høgdejustert) som grunnlag for caddie-forslag dersom
     // tilgjengeleg. Flat avstand er fallback (t.d. Sandane utan høgdedata, eller
@@ -1384,30 +1383,15 @@ function GolfShotTracker() {
     setClubUsage(newUsage);
     try { localStorage.setItem("golf-club-usage", JSON.stringify(newUsage)); } catch(e){}
 
-    if (inHole) {
-      const score = updatedShots.length;
-      const diff = score - holeInfo.par;
-      const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;
-      setHoles(prev => [...prev, { hole: currentHole, shots: updatedShots }]);
-      setCurrentShots([]);
-      const nextHole = currentHole + 1;
-      setCurrentHole(nextHole);
-      setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false);
-      setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
-      setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}${distance ? ` (siste: ${distance}m)` : ""}`);
-      // Scroll til toppen slik at kartet er synleg
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } else {
-      setCurrentShots(updatedShots);
-      setLastPos(pos);
-      setSelectedClub(null);
-      setCaddieIndex(null);
-      setStep("club");
-      const distText = distance ? ` — ${distance}m` : "";
-      const toHoleText = toHole ? ` · ${toHole}m att` : "";
-      setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
-    }
-  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo, clubUsage, aimMode]);
+    setCurrentShots(updatedShots);
+    setLastPos(pos);
+    setSelectedClub(null);
+    setCaddieIndex(null);
+    setStep("club");
+    const distText = distance ? ` — ${distance}m` : "";
+    const toHoleText = toHole ? ` · ${toHole}m att` : "";
+    setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
+  }, [step, selectedClub, lastPos, greenPos, currentShots, clubUsage, aimMode]);
 
   // GPS-henting: oppdater userPosition-markør på kartet. Viss me er i "map"-steg
   // og har vald kølle, blir punktet òg registrert som slagposisjon.
@@ -1465,15 +1449,43 @@ function GolfShotTracker() {
     setMessage(`↩ Fjerna slag ${removed.shotNumber} (${removed.club})`);
   };
 
+  /**
+   * Angrar heile det sist fullførte holet: hentar det tilbake som pågåande hol
+   * slik at enkeltslag kan rettast med «Angre siste slag». Vernar mot det
+   * dyraste feiltrykket ute — feil tal i putt-pickeren, som elles låser holet
+   * og rullar vidare til neste. Lagt til 06.07.2026.
+   */
+  const undoLastHole = () => {
+    if (holes.length === 0 || currentShots.length > 0) return;
+    const last = holes[holes.length - 1];
+    setHoles(holes.slice(0, -1));
+    setCurrentHole(last.hole);
+    setCurrentShots(last.shots);
+    const ls = last.shots.length > 0 ? last.shots[last.shots.length - 1] : null;
+    setLastPos(ls && ls.pos ? ls.pos : teePositions[last.hole - 1]);
+    setStep("club"); setSelectedClub(null); setCaddieIndex(null);
+    setMessage(`↩ Henta opp att hol ${last.hole} (${last.shots.length} slag) — bruk «Angre siste slag» for å rette`);
+  };
+
+  /**
+   * Held fram på back 9 etter fullført front 9 (berre Sunnfjord — Sandane har
+   * ikkje loop). Runden held fram som éi samla 18-hols runde med éin rapport
+   * og éi Sheets-rad. Lagt til 06.07.2026.
+   */
+  const continueOnBack = () => {
+    setExtendedTo18(true);
+    setCurrentHole(10);
+    setLastPos(teePositions[9]);
+    setStep("club"); setSelectedClub(null); setCaddieIndex(null);
+    setMessage("▶ Held fram på Back 9 — hol 10");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error"
   const [showPickup, setShowPickup] = useState(false);
   const [showPuttPicker, setShowPuttPicker] = useState(false);
-  // Caddie-modus: appen foreslår kølle basert på avstand. Brukar kan bla
-  // ◀▶ for å sykle gjennom køller, eller trykke "Vis alle køller" for å
-  // gå mellombels til full kølle-grid for dette eine slaget.
-  const [caddieMode, setCaddieMode] = useState(true); // true = caddie, false = full grid
-  const [caddieIndex, setCaddieIndex] = useState(null); // null = bruk auto-forslag, tal = manuelt valt
-  const [showAllClubs, setShowAllClubs] = useState(false); // mellombels override for "Vis alle"
+  // Caddie-modus-state (caddieMode, caddieIndex, showAllClubs) er flytta til
+  // toppen av komponenten 06.07.2026 — sjå kommentar der.
   const [isSending, setIsSending] = useState(false);
   // Synkron vakt mot dobbeltsending. State (isSending) er asynkron pga React-batching,
   // så raske dobbeltklikk kan komme forbi state-vakta. Ref blir sett umiddelbart.
@@ -1499,7 +1511,9 @@ function GolfShotTracker() {
       const html = buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData);
       const date = new Date().toISOString().slice(0,10);
       const time = new Date().toLocaleTimeString("nb-NO",{hour:"2-digit",minute:"2-digit"});
-      const filename = `${courseName}_${date}_${loop}_${rScore}slag.html`;
+      // Utvida runde (front + back): merk filnamnet "18hol" i staden for loop.
+      const loopLabel = extendedTo18 ? "18hol" : loop;
+      const filename = `${courseName}_${date}_${loopLabel}_${rScore}slag.html`;
       const newReport = { filename, date, time, holesPlayed: reportHoles.length, score: rScore, par: rPar, diff: rScore-rPar, html };
       const updated = [newReport, ...savedReports];
       setSavedReports(updated);
@@ -1508,7 +1522,7 @@ function GolfShotTracker() {
       // Send til Google Sheets
       setSheetsStatus("sending");
       const roundData = {
-          date, time, tee, loop, course,
+          date, time, tee, loop, course, extendedTo18,
           holesPlayed: reportHoles.length,
           score: rScore, par: rPar, diff: rScore - rPar,
           holes: reportHoles.map(h => ({
@@ -1549,8 +1563,7 @@ function GolfShotTracker() {
         setSheetsStatus(result.ok ? "ok" : "error");
 
       setHoles([]); setCurrentHole(startHole); setCurrentShots([]); setSelectedClub(null); setCaddieIndex(null);
-      setStep("club"); setLastPos(teePositions[startHole - 1]); setInHole(false); setConfirmFinish(false); setConfirmStraff(false); setAimPoint(null); setAimMode(false);
-      setRoundStarted(false);
+      setStep("club"); setLastPos(teePositions[startHole - 1]); setConfirmFinish(false); setConfirmStraff(false); setAimPoint(null); setAimMode(false); setExtendedTo18(false);
       setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
     } finally {
       // Slipp vakta uansett — også viss noko kasta unntak undervegs.
@@ -1562,35 +1575,24 @@ function GolfShotTracker() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#f5f5f0", fontFamily: "'Georgia', serif", color: "#1a1a1a" }}>
-      {/* Header — sticky, krympar til ei tynn linje ved scroll (headerCollapsed)
-          slik at meir av innhaldet under blir synleg utan å måtte scrolle. */}
-      <div style={{
-        background: "#1a3a25",
-        padding: headerCollapsed ? "8px 14px" : "16px 14px 12px",
-        borderBottom: "3px solid #c8b48c",
-        position: "sticky", top: 0, zIndex: 5000,
-        transition: "padding 0.15s ease",
-      }}>
+      {/* Header */}
+      <div style={{ background: "#1a3a25", padding: "16px 14px 12px", borderBottom: "3px solid #c8b48c" }}>
         <div style={{ maxWidth: 520, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              {!headerCollapsed && (
-                <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#fff" }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</h1>
-              )}
-              <p style={{ margin: headerCollapsed ? 0 : "2px 0 0", fontSize: headerCollapsed ? 15 : 13, color: "rgba(255,255,255,0.7)", fontWeight: 600, fontFamily: NUM_FONT }}>
-                {headerCollapsed && <span style={{ color: "#fff", fontWeight: 800, marginRight: 8 }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</span>}
-                Hol {currentHole}/{endHole}
-                {loop === "back" && hasLoop && <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 4 }}>(back)</span>}
+              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#fff" }}>{course === "sandane" ? "Sandane GK" : "Sunnfjord GK"}</h1>
+              <p style={{ margin: "2px 0 0", fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 600, fontFamily: NUM_FONT }}>
+                {roundComplete ? "Runde ferdig" : `Hol ${currentHole}/${endHole}`}
+                {!roundComplete && loop === "back" && hasLoop && <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 4 }}>(back)</span>}
                 {holes.length > 0 && <span style={{ color: scoreDiff>0?"#ff8a8a":scoreDiff<0?"#8eff8e":"#8ad4ff", marginLeft: 8 }}>{scoreDiff>0?`+${scoreDiff}`:scoreDiff===0?"E":scoreDiff}</span>}
               </p>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
               {[{key:"play",icon:"🏌️"},{key:"reports",icon:"📄"},{key:"calibrate",icon:"⚙️"}].map(tab => (
                 <button key={tab.key} onClick={()=>setView(tab.key)} style={{
-                  width: headerCollapsed ? 30 : 38, height: headerCollapsed ? 30 : 38, borderRadius: 8, border: "none",
+                  width: 38, height: 38, borderRadius: 8, border: "none",
                   background: view===tab.key?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",
-                  fontSize: headerCollapsed ? 14 : 17, cursor: "pointer", outline: view===tab.key?"2px solid #fff":"none", position: "relative",
-                  transition: "width 0.15s ease, height 0.15s ease",
+                  fontSize: 17, cursor: "pointer", outline: view===tab.key?"2px solid #fff":"none", position: "relative",
                 }}>
                   {tab.icon}
                   {tab.key==="reports"&&savedReports.length>0&&<span style={{ position: "absolute", top: -3, right: -3, width: 16, height: 16, borderRadius: "50%", background: "#ff6b6b", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{savedReports.length}</span>}
@@ -1605,45 +1607,28 @@ function GolfShotTracker() {
         {/* PLAY VIEW */}
         {view === "play" && (
           <>
-            {/* ─── STARTSKJERM ─── Vises éin gong før runda startar (berre for
-                Sunnfjord, som har front/back9-loop). Erstattar heile spele-
-                visninga slik at front/back9-valet ikkje tek fast plass under
-                aktiv spel. Forsvinn for godt når "Start runde" er trykt, til
-                runda er avslutta/forkasta eller bane er bytt. */}
-            {showStartScreen && (
-              <div style={{ background: "#fff", border: "2px solid #1a3a25", borderRadius: 14, padding: "28px 20px", textAlign: "center" }}>
-                <div style={{ fontSize: 13, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", fontWeight: 700, marginBottom: 6 }}>Klar til å starte runde</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#1a3a25", marginBottom: 22, fontFamily: NUM_FONT }}>Sunnfjord GK</div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-                  {[{ id: "front", label: "Front 9", sub: "Hol 1–9" }, { id: "back", label: "Back 9", sub: "Hol 10–18" }].map(o => (
-                    <button key={o.id} onClick={() => {
-                      setLoop(o.id);
-                      const newStartHole = o.id === "front" ? 1 : 10;
-                      setCurrentHole(newStartHole);
-                      setLastPos(teePositions[newStartHole - 1]);
-                      try { localStorage.setItem("golf-loop", o.id); } catch (e) {}
-                    }} style={{
-                      flex: 1, padding: "16px 10px", borderRadius: 10, cursor: "pointer",
-                      background: loop === o.id ? "#1a3a25" : "#fff",
-                      border: loop === o.id ? "2px solid #1a3a25" : "2px solid #ccc",
-                      color: loop === o.id ? "#fff" : "#666",
-                    }}>
-                      <div style={{ fontSize: 17, fontWeight: 800, fontFamily: NUM_FONT }}>{o.label}</div>
-                      <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8, marginTop: 2, fontFamily: NUM_FONT }}>{o.sub}</div>
-                    </button>
-                  ))}
+            {/* ─── RUNDE FULLFØRT-PANEL ─── Vist når siste hol er ferdigspela.
+                Erstattar den gamle «Hol 10/9»-tilstanden: tydeleg avslutting med
+                lagre øvst (utan scrolling), «hald fram på back 9» for Sunnfjord
+                front, angre siste hol, og forkast. Lagt til 06.07.2026. */}
+            {roundComplete && (
+              <div style={{ background: "#1a3a25", borderRadius: 14, padding: "18px 16px", marginBottom: 10, color: "#fff", textAlign: "center" }}>
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>Runde fullført</div>
+                <div style={{ fontSize: 44, fontWeight: 800, fontFamily: NUM_FONT, lineHeight: 1.1, marginTop: 4 }}>{totalScore}<span style={{ fontSize: 20, fontWeight: 600 }}> slag</span></div>
+                <div style={{ fontSize: 14, fontWeight: 600, fontFamily: NUM_FONT, color: "rgba(255,255,255,0.8)", marginTop: 2, marginBottom: 14 }}>{holes.length} hol · par {totalPar} · {scoreDiff > 0 ? `+${scoreDiff}` : scoreDiff === 0 ? "Even" : scoreDiff}</div>
+                <button onClick={finishRound} disabled={isSending} style={{ width: "100%", padding: "15px", background: isSending ? "#999" : "#ffd24a", border: "none", borderRadius: 10, color: "#1a3a25", fontSize: 17, fontWeight: 800, cursor: isSending ? "not-allowed" : "pointer", opacity: isSending ? 0.7 : 1 }}>{isSending ? "📤 Sender..." : "📄 Avslutt og lagre rapport"}</button>
+                {course === "sunnfjord" && loop === "front" && !extendedTo18 && (
+                  <button onClick={continueOnBack} style={{ width: "100%", marginTop: 8, padding: "13px", background: "rgba(255,255,255,0.12)", border: "2px solid rgba(255,255,255,0.4)", borderRadius: 10, color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>▶ Hald fram på Back 9 (hol 10–18)</button>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button onClick={undoLastHole} style={{ flex: 1, padding: "11px", background: "transparent", border: "1px solid rgba(255,255,255,0.35)", borderRadius: 8, color: "rgba(255,255,255,0.8)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>↩ Angre siste hol</button>
+                  <button onClick={()=>{ setConfirmDiscard(true); setTimeout(()=>window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }), 60); }} style={{ flex: 1, padding: "11px", background: "transparent", border: "1px solid rgba(255,255,255,0.35)", borderRadius: 8, color: "rgba(255,255,255,0.8)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🗑 Forkast runde</button>
                 </div>
-                <button onClick={() => setRoundStarted(true)} style={{
-                  width: "100%", padding: "16px", background: "#ffd24a", border: "none",
-                  borderRadius: 10, color: "#1a3a25", fontSize: 17, fontWeight: 800, cursor: "pointer",
-                }}>Start runde →</button>
               </div>
             )}
 
-            {!showStartScreen && (
-            <>
             {/* Hol-info — tynn éi-linje-stripe (hol/par/index/teelengd) */}
-            {holeInfo && (
+            {holeInfo && !roundComplete && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap", padding: "8px 14px", marginBottom: 8, background: "#fff", borderRadius: 10, border: "2px solid #1a3a25", fontFamily: NUM_FONT }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: "#1a3a25" }}>Hol {currentHole}</span>
                 <span style={{ fontSize: 14, fontWeight: 600, color: "#888" }}>Par {holeInfo.par}</span>
@@ -1658,7 +1643,19 @@ function GolfShotTracker() {
             {/* ─── NESTE SLAG-BOKS ─── Den viktigaste informasjonen, samla og stor.
                 Viser: avstand til flagg (stort), kølleforslag, og treffsone.
                 Synleg berre når vi ikkje er på green (step==="club" og ikkje putt-modus). */}
-            {holeInfo && step === "club" && !showPuttPicker && distToHole != null && (() => {
+            {holeInfo && !roundComplete && step === "club" && !showPuttPicker && distToHole != null && (() => {
+              // Nær green (< 20m): krymp boksen til éi linje. Her er det putt
+              // eller chip som gjeld — det store kølleforslaget stel berre
+              // skjermplass frå kartet og putt-knappane. Kølle for chip veljast
+              // via «Vis alle køller». Lagt til 06.07.2026.
+              if (distToHole < 20) {
+                return (
+                  <div style={{ background: "#1a3a25", borderRadius: 14, padding: "10px 16px", marginBottom: 8, color: "#fff", display: "flex", alignItems: "baseline", justifyContent: "center", gap: 10 }}>
+                    <span style={{ fontSize: 30, fontWeight: 800, fontFamily: NUM_FONT, lineHeight: 1 }}>{distToHole}<span style={{ fontSize: 16, fontWeight: 600 }}>m</span></span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>til flagg — kort spel (putt/chip)</span>
+                  </div>
+                );
+              }
               // Bestem vist kølle: følg caddie-blading (caddieIndex) eller auto-forslag.
               const caddieTarget = playsLike ?? distToHole;
               const autoClub = findNearestClub(caddieTarget);
@@ -1731,6 +1728,31 @@ function GolfShotTracker() {
               );
             })()}
 
+            {/* Loop-veljar: berre synleg for Sunnfjord (delt bane) og før første slag */}
+            {hasLoop && holes.length === 0 && currentShots.length === 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", marginBottom: 10, background: "#fff", borderRadius: 10, border: "2px solid #c8b48c" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Du startar med:</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: "#1a3a25" }}>
+                    {loop === "front" ? "Front 9 (hol 1–9)" : "Back 9 (hol 10–18)"}
+                  </div>
+                </div>
+                <button onClick={()=>{
+                  const newLoop = loop === "front" ? "back" : "front";
+                  const newStartHole = newLoop === "front" ? 1 : 10;
+                  setLoop(newLoop);
+                  setCurrentHole(newStartHole);
+                  setLastPos(teePositions[newStartHole - 1]);
+                  try { localStorage.setItem("golf-loop", newLoop); } catch(e){}
+                }} style={{
+                  padding: "10px 14px", background: "#1a3a25", border: "none",
+                  borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                }}>
+                  Byt til {loop === "front" ? "Back 9" : "Front 9"}
+                </button>
+              </div>
+            )}
+
             {/* Melding */}
             {message && <div style={{ background: "#e8f5e9", border: "2px solid #4a8c5c", borderRadius: 10, padding: "12px 16px", marginBottom: 10, fontSize: 15, lineHeight: 1.5, color: "#1a3a25", fontWeight: 600 }}>{message}</div>}
 
@@ -1786,7 +1808,7 @@ function GolfShotTracker() {
 
 
             {/* Slag-handlingar: på green, chip-in, straff, pickup, og full kølle-grid */}
-            {step === "club" && (
+            {step === "club" && !roundComplete && (
               <div>
                 <div style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: "#666", fontWeight: 700, marginBottom: 8, textAlign: "center" }}>
                   Slag {currentShots.length+1}
@@ -1841,7 +1863,7 @@ function GolfShotTracker() {
                           setShowPuttPicker(false);
                           const nextHole = currentHole + 1;
                           setCurrentHole(nextHole);
-                          setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false);
+                          setStep("club"); setSelectedClub(null); setCaddieIndex(null);
                           setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
                           setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag (${n}-putt) — ${label}`);
                           window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1877,7 +1899,7 @@ function GolfShotTracker() {
                   setCurrentShots([]);
                   const nextHole = currentHole + 1;
                   setCurrentHole(nextHole);
-                  setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false);
+                  setStep("club"); setSelectedClub(null); setCaddieIndex(null);
                   setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
                   setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}`);
                   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1914,21 +1936,43 @@ function GolfShotTracker() {
 
                 {/* Straffeslag-bekrefting. Lagt til 02.05.2026 etter at brukar
                     rapporterte at straffeslag burde krevje bekrefting. */}
+                {/* Straffe-dialog med to val (utvida 06.07.2026):
+                    1. Vanleg straff +1 — ballen blir spela vidare der han ligg
+                       (drop, uspelbar ball o.l.). lastPos blir ikkje endra.
+                    2. OB / mista ball — stroke and distance: straff +1 OG neste
+                       slag frå posisjonen det tapte slaget vart slått FRÅ.
+                       Føreset at slaget som gjekk OB alt er registrert på kartet
+                       (der ballen forsvann / kryssa OB-grensa). */}
                 {confirmStraff && (
                   <div style={{ background: "#fff", border: "2px solid #cc6600", borderRadius: 12, padding: "16px", marginBottom: 8, textAlign: "center" }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>Legge til straffeslag?</div>
-                    <div style={{ fontSize: 13, color: "#666", marginBottom: 14 }}>Score blir auka med 1</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={()=>setConfirmStraff(false)} style={{ flex: 1, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
-                      <button onClick={()=>{
-                        const lastShot = currentShots[currentShots.length - 1];
-                        const pos = lastShot?.pos || lastPos;
-                        const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true };
-                        setCurrentShots(prev => [...prev, shot]);
-                        setMessage(`⚠️ Straffeslag lagt til — no ${currentShots.length + 1} slag`);
-                        setConfirmStraff(false);
-                      }} style={{ flex: 2, padding: "12px", background: "#cc6600", border: "2px solid #cc6600", borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚠️ Bekreft straff +1</button>
-                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>Straffeslag — vel type</div>
+                    <div style={{ fontSize: 13, color: "#666", marginBottom: 12, lineHeight: 1.5 }}>Ved OB/mista ball: registrer fyrst slaget som gjekk ut (trykk på kartet der ballen forsvann), og vel så knappen under.</div>
+                    <button onClick={()=>{
+                      const lastShot = currentShots[currentShots.length - 1];
+                      const pos = lastShot?.pos || lastPos;
+                      const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true };
+                      setCurrentShots(prev => [...prev, shot]);
+                      setMessage(`⚠️ Straffeslag lagt til — no ${currentShots.length + 1} slag`);
+                      setConfirmStraff(false);
+                    }} style={{ width: "100%", padding: "14px", background: "#cc6600", border: "2px solid #cc6600", borderRadius: 8, color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 8, lineHeight: 1.3 }}>⚠️ Straff +1 — spel vidare der ballen ligg</button>
+                    <button onClick={()=>{
+                      // Stroke and distance: neste slag frå posisjonen det siste
+                      // slaget vart slått FRÅ. Slag N-1 sin pos = der slag N vart
+                      // slått frå; er berre eitt slag registrert, er det tee.
+                      const prevPos = currentShots.length >= 2
+                        ? currentShots[currentShots.length - 2].pos
+                        : teePositions[currentHole - 1];
+                      const toHole = prevPos && greenPos
+                        ? Math.round(haversineDistance(prevPos.lat, prevPos.lon, greenPos.lat, greenPos.lon))
+                        : null;
+                      const shot = { club: "Straff", pos: prevPos, distance: null, toHole, shotNumber: currentShots.length + 1, penalty: true, ob: true };
+                      setCurrentShots(prev => [...prev, shot]);
+                      setLastPos(prevPos);
+                      setSelectedClub(null); setCaddieIndex(null); setStep("club");
+                      setConfirmStraff(false);
+                      setMessage(`⛔ OB/mista ball — straff +1. Slag ${currentShots.length + 2} frå førre posisjon`);
+                    }} style={{ width: "100%", padding: "14px", background: "#fff", border: "2px solid #cc0000", borderRadius: 8, color: "#cc0000", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 8, lineHeight: 1.3 }}>⛔ OB / mista ball — straff +1, slå om att frå førre posisjon</button>
+                    <button onClick={()=>setConfirmStraff(false)} style={{ width: "100%", padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
                   </div>
                 )}
 
@@ -1958,7 +2002,7 @@ function GolfShotTracker() {
                             setCurrentShots([]);
                             const nextHole = currentHole + 1;
                             setCurrentHole(nextHole);
-                            setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false); setShowPickup(false);
+                            setStep("club"); setSelectedClub(null); setCaddieIndex(null); setShowPickup(false);
                             setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
                             setMessage(`🏳️ Hol ${currentHole} pickup — ${opt.score} slag (${opt.label})`);
                             window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2032,7 +2076,7 @@ function GolfShotTracker() {
 
             {/* Map step — vel anna kølle */}
             {step === "map" && (
-              <button onClick={()=>{setStep("club");setSelectedClub(null);setInHole(false);}} style={{
+              <button onClick={()=>{setStep("club");setSelectedClub(null);}} style={{
                 width: "100%", marginTop: 6, padding: "12px", background: "#fff", border: "2px solid #ccc",
                 borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer",
               }}>← Vel anna kølle</button>
@@ -2042,7 +2086,12 @@ function GolfShotTracker() {
             {currentShots.length > 0 && step === "club" && (
               <button onClick={undoLast} style={{ width: "100%", marginTop: 10, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 10, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>↩ Angre siste slag</button>
             )}
-            </>
+
+            {/* Angre siste HOL — synleg i starten av eit nytt hol (før første
+                slag), slik at feiltrykk i putt-picker/chip-in kan rettast utan
+                å forkaste heile runden. Lagt til 06.07.2026. */}
+            {currentShots.length === 0 && step === "club" && holes.length > 0 && !roundComplete && (
+              <button onClick={undoLastHole} style={{ width: "100%", marginTop: 10, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 10, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>↩ Angre hol {holes[holes.length-1].hole} ({holes[holes.length-1].shots.length} slag)</button>
             )}
           </>
         )}
@@ -2050,7 +2099,7 @@ function GolfShotTracker() {
         {/* Avslutt runde */}
         {(holes.length>0||currentShots.length>0)&&(
           <div style={{marginTop:20,paddingTop:16,borderTop:"2px solid #ddd"}}>
-            {!confirmFinish && !confirmDiscard && (
+            {!confirmFinish && !confirmDiscard && !roundComplete && (
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 <button onClick={()=>setConfirmFinish(true)} style={{width:"100%",padding:"14px",background:"#fff",border:"2px solid #cc4444",borderRadius:10,color:"#cc4444",fontSize:15,fontWeight:600,cursor:"pointer"}}>Avslutt runde og lagre rapport</button>
                 <button onClick={()=>setConfirmDiscard(true)} style={{width:"100%",padding:"10px",background:"#fff",border:"1px solid #bbb",borderRadius:10,color:"#888",fontSize:13,fontWeight:600,cursor:"pointer"}}>🗑 Forkast runde utan å lagre</button>
@@ -2078,9 +2127,9 @@ function GolfShotTracker() {
                     setHoles([]); setCurrentHole(startHole); setCurrentShots([]);
                     setSelectedClub(null); setCaddieIndex(null);
                     setStep("club"); setLastPos(teePositions[startHole-1]);
-                    setInHole(false); setConfirmFinish(false); setConfirmDiscard(false);
+                    setConfirmFinish(false); setConfirmDiscard(false);
                     setConfirmStraff(false); setAimPoint(null); setAimMode(false);
-                    setShowPickup(false); setShowPuttPicker(false); setRoundStarted(false);
+                    setShowPickup(false); setShowPuttPicker(false); setExtendedTo18(false);
                     try { localStorage.removeItem(`golf-${course}-active-round`); } catch(e){}
                     setMessage("🗑 Runde forkasta");
                   }} style={{flex:2,padding:"14px",background:"#666",border:"2px solid #666",borderRadius:8,color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer"}}>🗑 Forkast runde</button>
@@ -2104,10 +2153,10 @@ function GolfShotTracker() {
                   <button key={id} onClick={()=>{
                     setCourse(id);
                     setHoles([]); setCurrentShots([]); setCaddieIndex(null);
+                    setExtendedTo18(false);
                     const newStartHole = 1;
                     setCurrentHole(newStartHole);
                     setLoop("front");
-                    setRoundStarted(false);
                     try { localStorage.setItem("golf-course", id); } catch(e){}
                   }} style={{
                     flex:1, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:700,

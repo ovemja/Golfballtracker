@@ -43,8 +43,6 @@ const COURSE_DATA = [
   { hole: 17, par: 4, index: 16, yellowM: 227 },
   { hole: 18, par: 4, index: 8,  yellowM: 273 },
 ];
-const TOTAL_PAR = COURSE_DATA.reduce((s, h) => s + h.par, 0);
-
 // Køller i aktiv bruk, matchar Trackman My Bag-mapping 02.05.2026.
 // Merk: "PW" = Honma #10 (46,5°), "GW" = Honma #11 (50°), "SW" = Honma S (56°).
 // Honma #3, #4, #5, #7 (tidlegare) og 3-wood er i bag men ikkje aktive.
@@ -426,8 +424,9 @@ const COURSE_CENTER = { lat: 61.484238, lon: 6.080908 };
 // ─── SANDANE GK ──────────────────────────────────────────────────────────────
 // Banedata for Sandane GK, 9-hols bane. GPS-målte tee- og green-koordinatar
 // frå 15.05.2026. Par og indeks er placeholders — oppdater når offisielle
-// data er tilgjengelege. Ingen raud tee-data enno. Ingen OSM hole-lines.
-// Ingen høgdedata — spel-avstand vises ikkje for Sandane.
+// data er tilgjengelege. Ingen raud tee-data enno. Høgdedata frå Kartverket
+// DTM1 (NN2000) og dogleg-mellomnoder med høgdeprofil er lagt til for
+// segmentert spel-avstand-utrekning (juni 2026).
 
 const COURSE_DATA_SANDANE = [
   { hole: 1, par: 4, index: 5,  yellowM: 250 }, // placeholder par/index
@@ -465,11 +464,11 @@ const DEFAULT_GREEN_POSITIONS_SANDANE = [
   { lat: 61.7564,  lon: 6.2412  }, // green 9
 ];
 
-// Ingen høgdedata for Sandane enno — alt 0 slik at spel-avstand ikkje vises.
+// Høgdedata for Sandane — henta 15.05.2026 frå Kartverkets DTM1-API (NN2000).
 const TEE_ELEVATIONS_YELLOW_SANDANE = [21.76, 15.71, 13.90, 15.64, 13.90, 38.75, 28.92, 15.83, 21.01]; // DTM1 NN2000 15.05.2026
 const GREEN_ELEVATIONS_SANDANE      = [15.72, 16.92, 15.56, 14.90, 39.23, 36.25, 15.95, 19.56, 12.77]; // DTM1 NN2000 15.05.2026
 
-// Ingen OSM hole-lines for Sandane enno.
+// Dogleg-mellomnoder for Sandane med høgdeprofil (5 av 9 hol).
 const OSM_HOLE_INTERMEDIATES_SANDANE = [
   [{ lat: 61.75868, lon: 6.23983, elev: 20.85 }, { lat: 61.75893, lon: 6.23861, elev: 19.83 }], // hol 1
   [], // hol 2 — rett linje
@@ -801,11 +800,14 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
         }).addTo(map);
         markersRef.current.push(ellipse);
 
-        // Senterpunkt carry
+        // Senterpunkt carry. Sidevegs-offset (trackman.side) skal leggjast
+        // VINKELRETT på sikteretninga. Høgre-vektor (positiv side) = (cos(b), -sin(b))
+        // for (aust, nord) når bearing 0 = nord, π/2 = aust. Tidlegare hadde cos/sin
+        // bytta plass, så etiketten sto langs sikteretninga i staden for til sida.
         const centerPt = pointAtDistanceAndBearing(lastPt.lat, lastPt.lon, trackman.carry, bearing);
         const adjustedCenter = {
-          lat: centerPt.lat + (trackman.side * Math.cos(bearing)) / 111320,
-          lon: centerPt.lon + (trackman.side * Math.sin(bearing)) / mPerDegLon,
+          lat: centerPt.lat + (trackman.side * -Math.sin(bearing)) / 111320,
+          lon: centerPt.lon + (trackman.side * Math.cos(bearing)) / mPerDegLon,
         };
         const cm = L.circleMarker([adjustedCenter.lat, adjustedCenter.lon], {
           radius: 5, color: "#fff", fillColor: "#e67300", fillOpacity: 1, weight: 2, interactive: false,
@@ -898,7 +900,9 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
  * @param {Array<{hole: number, par: number, index: number, yellowM: number}>} courseData - Bane-info
  * @returns {string} Komplett HTML-dokument som kan lastast ned
  */
-function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData) {
+function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData, courseDisplayName) {
+  const displayName = courseDisplayName || "Sunnfjord Golfklubb";
+  const shortName = displayName.replace(" Golfklubb", " GK");
   const date = new Date().toLocaleDateString("nb-NO", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const rScore = reportHoles.reduce((s, h) => s + h.shots.length, 0);
   const rPar = reportHoles.reduce((s, h) => s + courseData[h.hole - 1].par, 0);
@@ -972,7 +976,7 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseD
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
     <style>body{font-family:Georgia,serif;color:#1a1a1a;max-width:700px;margin:0 auto;padding:20px 16px}h1{color:#2d5a3d;font-size:20px;margin-bottom:2px}h2{color:#2d5a3d;font-size:14px;border-bottom:2px solid #2d5a3d;padding-bottom:3px;margin-top:20px}h3{font-size:13px}table{width:100%;border-collapse:collapse}th,td{padding:4px 8px;border:1px solid #ddd;font-size:12px}th{background:#2d5a3d;color:white;font-size:11px}.summary{display:flex;gap:12px;margin:12px 0}.stat-box{background:#f4f7f5;border-radius:6px;padding:10px 14px;text-align:center;flex:1}.stat-box .num{font-size:24px;font-weight:300;color:#2d5a3d}.stat-box .lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.1em}</style></head><body>
-    <h1>⛳ Sunnfjord Golfklubb</h1>
+    <h1>⛳ ${displayName}</h1>
     <p style="color:#666;margin:0 0 14px;font-size:13px">${date} · ${"Gul tee"}</p>
     <div class="summary"><div class="stat-box"><div class="num">${rScore}</div><div class="lbl">Slag</div></div><div class="stat-box"><div class="num">${diffStr}</div><div class="lbl">Par ${rPar}</div></div><div class="stat-box"><div class="num">${reportHoles.length}</div><div class="lbl">Hol</div></div></div>
     <h2>Scorekort</h2>
@@ -980,7 +984,7 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseD
     ${mapSVG}
     ${clubRows?`<h2>Kølle-statistikk</h2><table><tr><th>Kølle</th><th>Slag</th><th>Snitt</th><th>Lengst</th></tr>${clubRows}</table>`:""}
     <h2>Slagdetaljar</h2>${shotDetails}
-    <p style="margin-top:20px;font-size:10px;color:#aaa;text-align:center">Sunnfjord GK Slagregistrering</p>
+    <p style="margin-top:20px;font-size:10px;color:#aaa;text-align:center">${shortName} Slagregistrering</p>
   </body></html>`;
 }
 
@@ -1087,7 +1091,8 @@ function ReportItem({ report: r, index: i, savedReports, setSavedReports, course
     });
     const newScore = newHoles.reduce((s,h) => s + h.shots.length, 0);
     const newPar = newHoles.reduce((s,h) => s + courseData[h.hole-1].par, 0);
-    const newHtml = buildReportHTML(newHoles, tee, teePositions, greenPositions, courseData);
+    const displayName = reportCourse === "sandane" ? "Sandane Golfklubb" : "Sunnfjord Golfklubb";
+    const newHtml = buildReportHTML(newHoles, tee, teePositions, greenPositions, courseData, displayName);
     const updatedReport = { ...r, holes: newHoles, score: newScore, par: newPar, diff: newScore - newPar, html: newHtml };
     const updated = savedReports.map((rep,idx) => idx===i ? updatedReport : rep);
     setSavedReports(updated);
@@ -1184,7 +1189,6 @@ function GolfShotTracker() {
   const totalHoles      = course === "sandane" ? 9  : 18;
   const hasLoop         = course === "sandane" ? false : true;
   const courseName      = course === "sandane" ? "Sandane_GK" : "Sunnfjord_GK";
-  const activeTotalPar  = courseData.reduce((s,h) => s + h.par, 0);
   // Loop-val: "front" = hol 1-9, "back" = hol 10-18. Sunnfjord deler bana, så
   // back nine har eigne tee-platå. Valt før første slag og kan ikkje endrast
   // mid-runde. Lagra i localStorage som preferanse mellom rundar.
@@ -1193,7 +1197,6 @@ function GolfShotTracker() {
   const startHole = loop === "front" ? 1 : 10;
   const endHole = loop === "front" ? 9 : 18;
   const [lastPos, setLastPos] = useState(TEE_POSITIONS_YELLOW[0]);
-  const [inHole, setInHole] = useState(false);
   const [aimPoint, setAimPoint] = useState(null);
   const [aimMode, setAimMode] = useState(false); // true = neste trykk set siktepunkt // Manuelt siktepunkt for ellipse
   const [savedReports, setSavedReports] = useState([]);
@@ -1201,14 +1204,20 @@ function GolfShotTracker() {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [confirmStraff, setConfirmStraff] = useState(false);
   const [greenPositions, setGreenPositions] = useState([...DEFAULT_GREEN_POSITIONS]);
-  // Når course endrar seg, nullstill greenPositions til korrekte defaultverdiar
-  // og last ev. kalibrerte posisjonar frå kurs-spesifikk localStorage.
+  // Når course endrar seg (både ved oppstart og manuell kursbyte), last kurs-
+  // spesifikke greens OG rapportar frå riktig localStorage-nøkkel. Utan dette
+  // viser 📄-fana rapportar frå forrige kurs etter kursbyte, og finishRound
+  // skriv over den lista på det nye kurset — data blir blanda.
   React.useEffect(() => {
     setGreenPositions([...defaultGreens]);
     try {
       const g = localStorage.getItem(`golf-${course}-green-pos`);
       if (g) setGreenPositions(JSON.parse(g));
     } catch(e){}
+    try {
+      const r = localStorage.getItem(`golf-${course}-reports`);
+      setSavedReports(r ? JSON.parse(r) : []);
+    } catch(e){ setSavedReports([]); }
   }, [course]);
   const [calHole, setCalHole] = useState(1);
   const [calStep, setCalStep] = useState(null); // null | "green" (tee-kalibrering fjerna 02.05.2026)
@@ -1226,44 +1235,63 @@ function GolfShotTracker() {
   // etiketten — særleg viktig på liten skjerm i sterkt sollys.
   const sortedClubs = CLUBS;
 
-  // Last rapportar, aktiv runde og kalibrerte posisjonar frå localStorage
+  // Oppstarts-effekt: køyr éin gong ved mount. Les kurs-preferanse FYRST,
+  // og les så aktiv runde direkte frå riktig kurs-nøkkel som lokal variabel.
+  // Tidlegare las denne effekten frå `golf-${course}-active-round` medan course
+  // framleis var initial-verdien "sunnfjord" — så pågåande Sandane-rundar vart
+  // aldri henta opp att etter reload. Kurs-avhengige greens og rapportar blir
+  // no handterte av course-effekten over (som køyrer på nytt når course endrar
+  // seg her).
   useEffect(() => {
-    try { const r = localStorage.getItem(`golf-${course}-reports`); if (r) setSavedReports(JSON.parse(r)); } catch(e){}
-    // Migrering 02.05.2026: tee-kalibrering er fjerna. Slett gammal localStorage-data
-    // slik at ho ikkje ligg og bruker plass utan formål.
+    // Migrering 02.05.2026: tee-kalibrering er fjerna. Slett gammal localStorage-data.
     try { localStorage.removeItem("golf-tee-pos"); } catch(e){}
-    try { const g = localStorage.getItem(`golf-${course}-green-pos`); if (g) setGreenPositions(JSON.parse(g)); } catch(e){}
-    // Last caddie-modus-preferanse (default: true / på)
+
+    // Les kurs-val (default: sunnfjord) — må skje fyrst så resten kan bruke rett nøkkel.
+    let c = "sunnfjord";
+    try {
+      const cv = localStorage.getItem("golf-course");
+      if (cv === "sunnfjord" || cv === "sandane") c = cv;
+    } catch(e){}
+
+    // Aktiv runde kan ligge på det andre kurset (viss brukar bytta kurs utan å avslutte).
+    // Prioriter kurs med aktiv runde over lagra preferanse.
+    let activeRoundOnOtherCourse = false;
+    try {
+      const otherC = c === "sunnfjord" ? "sandane" : "sunnfjord";
+      const rOther = localStorage.getItem(`golf-${otherC}-active-round`);
+      const rCurrent = localStorage.getItem(`golf-${c}-active-round`);
+      if (rOther && !rCurrent) {
+        const dOther = JSON.parse(rOther);
+        if ((dOther.holes && dOther.holes.length > 0) || (dOther.currentShots && dOther.currentShots.length > 0)) {
+          c = otherC;
+          activeRoundOnOtherCourse = true;
+        }
+      }
+    } catch(e){}
+    if (c !== "sunnfjord" || activeRoundOnOtherCourse) setCourse(c);
+
+    // Kurs-uavhengige preferansar.
     try {
       const cm = localStorage.getItem("golf-caddie-mode");
       if (cm !== null) setCaddieMode(cm === "true");
     } catch(e){}
-    // Last kurs-val (default: sunnfjord)
-    try {
-      const cv = localStorage.getItem("golf-course");
-      if (cv === "sunnfjord" || cv === "sandane") setCourse(cv);
-    } catch(e){}
-    // Last loop-preferanse (default: "front"). Når brukaren har valt back
-    // sist gong, hugsast det til neste runde, men kan endrast før første slag.
+
+    let loopPref = "front";
     try {
       const lp = localStorage.getItem("golf-loop");
       if (lp === "front" || lp === "back") {
+        loopPref = lp;
         setLoop(lp);
-        // Initialiser currentHole basert på loop. Berre viss appen er heilt
-        // ny (ingen aktiv runde) — aktiv runde overstyrer (sjå nedanfor).
-        if (lp === "back") {
-          setCurrentHole(10);
-          setLastPos(TEE_POSITIONS_YELLOW[9]);
-        }
       }
     } catch(e){}
+
     // Les bruksstatistikk og migrer gamle kølle-namn til nye.
     // Endra 22.04.2026: LW → PW (Honma #10 er eigentleg PW), og fjern
     // bruksstatistikk for køller som ikkje lenger finst i CLUBS-arrayet.
     try {
-      const c = localStorage.getItem("golf-club-usage");
-      if (c) {
-        const oldUsage = JSON.parse(c);
+      const cu = localStorage.getItem("golf-club-usage");
+      if (cu) {
+        const oldUsage = JSON.parse(cu);
         const newUsage = {};
         const clubMigrationMap = {
           "LW": "PW",        // Honma #10 var feilmerkt som LW
@@ -1288,20 +1316,32 @@ function GolfShotTracker() {
         }
       }
     } catch(e){}
+
+    // Aktiv runde — les direkte med rett kurs-nøkkel (`c`, ikkje `course` state).
+    // Bruk kurs-spesifikke tee-koordinatar for lastPos-fallback.
+    const activeTeePositions = c === "sandane" ? TEE_POSITIONS_YELLOW_SANDANE : TEE_POSITIONS_YELLOW;
     try {
-      const r = localStorage.getItem(`golf-${course}-active-round`);
+      const r = localStorage.getItem(`golf-${c}-active-round`);
       if (r) {
         const d = JSON.parse(r);
-        // Gjenopprett loop først, slik at downstream-effektar (lastPos, m.m.) blir rette
         if (d.loop === "front" || d.loop === "back") setLoop(d.loop);
-        if (d.course === "sunnfjord" || d.course === "sandane") setCourse(d.course);
-        setHoles(d.holes||[]); setCurrentHole(d.currentHole||1);
+        setHoles(d.holes||[]);
+        setCurrentHole(d.currentHole||1);
         setCurrentShots(d.currentShots||[]);
         if (d.currentShots?.length > 0) {
           const ls = d.currentShots[d.currentShots.length-1];
-          setLastPos(ls.pos || teePositions[(d.currentHole||1)-1]);
-        } else { setLastPos(teePositions[(d.currentHole||1)-1]); }
+          setLastPos(ls.pos || activeTeePositions[(d.currentHole||1)-1]);
+        } else {
+          setLastPos(activeTeePositions[(d.currentHole||1)-1]);
+        }
         setMessage("♻️ Pågåande runde henta opp att");
+      } else {
+        // Ingen aktiv runde: initialiser lastPos til rett tee på rett kurs.
+        // Utan dette står lastPos hardkoda som TEE_POSITIONS_YELLOW[0] (Sunnfjord)
+        // sjølv når vald kurs er Sandane — «Avstand til flagg» blir då ~30 km.
+        const startHoleInit = loopPref === "back" ? 10 : 1;
+        setCurrentHole(startHoleInit);
+        setLastPos(activeTeePositions[startHoleInit - 1]);
       }
     } catch(e){}
   }, []);
@@ -1339,6 +1379,13 @@ function GolfShotTracker() {
     };
   }, [view]);
 
+  // Nullstill manuelt siktepunkt når holet endrar seg. Utan dette peikar
+  // auto-ellipsen mot førre hols siktepunkt til brukaren vel kølle på nytt hol.
+  useEffect(() => {
+    setAimPoint(null);
+    setAimMode(false);
+  }, [currentHole]);
+
   // Lagre aktiv runde
   useEffect(() => {
     try {
@@ -1373,21 +1420,6 @@ function GolfShotTracker() {
   const playsLike = distToHole != null && elevDiffToGreen != null
     ? Math.round(distToHole + elevDiffToGreen / 3)
     : null;
-
-  // Synkroniser auto-forslag til selectedClub når brukaren ikkje har bla manuelt
-  // (caddieIndex er null). Når brukaren blar med ◀▶, setjast selectedClub direkte
-  // i knappens onClick. Denne useEffect handsamer berre auto-forslag.
-  useEffect(() => {
-    if (!caddieMode || showAllClubs) return;
-    if (step !== "club") return;
-    if (caddieIndex !== null) return; // brukaren har bla manuelt — ikkje overskriv
-    // Bruk spel-avstand (høgdejustert) som grunnlag for caddie-forslag dersom
-    // tilgjengeleg. Flat avstand er fallback (t.d. Sandane utan høgdedata, eller
-    // tidleg i runden der spel-avstand ikkje er rekna ut enno).
-    const caddieTarget = playsLike ?? distToHole;
-    const autoClub = caddieTarget != null ? findNearestClub(caddieTarget) : "Driver";
-    if (autoClub !== selectedClub) setSelectedClub(autoClub);
-  }, [caddieMode, showAllClubs, step, caddieIndex, distToHole, currentHole]);
 
   const handleSelectClub = club => {
     setSelectedClub(club);
@@ -1425,30 +1457,15 @@ function GolfShotTracker() {
     setClubUsage(newUsage);
     try { localStorage.setItem("golf-club-usage", JSON.stringify(newUsage)); } catch(e){}
 
-    if (inHole) {
-      const score = updatedShots.length;
-      const diff = score - holeInfo.par;
-      const label = diff<=-2?"Eagle!":diff===-1?"Birdie!":diff===0?"Par":diff===1?"Bogey":diff===2?"Dobbel-bogey":`+${diff}`;
-      setHoles(prev => [...prev, { hole: currentHole, shots: updatedShots }]);
-      setCurrentShots([]);
-      const nextHole = currentHole + 1;
-      setCurrentHole(nextHole);
-      setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false);
-      setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
-      setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}${distance ? ` (siste: ${distance}m)` : ""}`);
-      // Scroll til toppen slik at kartet er synleg
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } else {
-      setCurrentShots(updatedShots);
-      setLastPos(pos);
-      setSelectedClub(null);
-      setCaddieIndex(null);
-      setStep("club");
-      const distText = distance ? ` — ${distance}m` : "";
-      const toHoleText = toHole ? ` · ${toHole}m att` : "";
-      setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
-    }
-  }, [step, selectedClub, lastPos, greenPos, currentShots, inHole, currentHole, holeInfo, clubUsage, aimMode]);
+    setCurrentShots(updatedShots);
+    setLastPos(pos);
+    setSelectedClub(null);
+    setCaddieIndex(null);
+    setStep("club");
+    const distText = distance ? ` — ${distance}m` : "";
+    const toHoleText = toHole ? ` · ${toHole}m att` : "";
+    setMessage(`✅ Slag ${shot.shotNumber}: ${shot.club}${distText}${toHoleText}`);
+  }, [step, selectedClub, lastPos, greenPos, currentShots, currentHole, holeInfo, clubUsage, aimMode]);
 
   // GPS-henting: oppdater userPosition-markør på kartet. Viss me er i "map"-steg
   // og har vald kølle, blir punktet òg registrert som slagposisjon.
@@ -1520,6 +1537,30 @@ function GolfShotTracker() {
   // så raske dobbeltklikk kan komme forbi state-vakta. Ref blir sett umiddelbart.
   const isSendingRef = useRef(false);
 
+  // Synkroniser auto-forslag til selectedClub når brukaren ikkje har bla manuelt
+  // (caddieIndex er null). Når brukaren blar med ◀▶, setjast selectedClub direkte
+  // i knappens onClick. Denne useEffect handsamer berre auto-forslag.
+  //
+  // Flytta hit (frå tidlegare plassering før state-deklarasjonar) slik at
+  // avhengnadslista peikar til reelle state-verdiar. Tidlegare fungerte
+  // koden berre pga Babel/var-hoisting og effekten køyrde ikkje på nytt ved
+  // caddieMode/caddieIndex/showAllClubs-endring.
+  //
+  // Driver-blokkering: frå slag 2 og utover skal auto-forslaget aldri vere
+  // Driver — brukaren speler Driver berre frå tee. Blokkering held ellipse
+  // og caddie-forslag konsistent (før viste kartellipsen Driver medan boksen
+  // viste 5-Wood).
+  useEffect(() => {
+    if (!caddieMode || showAllClubs) return;
+    if (step !== "club") return;
+    if (caddieIndex !== null) return; // brukaren har bla manuelt — ikkje overskriv
+    const driverBlocked = currentShots.length > 0;
+    const caddieTarget = playsLike ?? distToHole;
+    let autoClub = caddieTarget != null ? findNearestClub(caddieTarget) : "Driver";
+    if (driverBlocked && autoClub === "Driver") autoClub = "5-Wood";
+    if (autoClub !== selectedClub) setSelectedClub(autoClub);
+  }, [caddieMode, showAllClubs, step, caddieIndex, distToHole, playsLike, currentHole, currentShots.length]);
+
   const finishRound = async () => {
     // Synkron sjekk via ref — ikkje state. Forhindrar at to klikk i rask
     // rekkefølge begge kjem forbi vakta før React har re-rendra.
@@ -1537,7 +1578,8 @@ function GolfShotTracker() {
       }
       const rScore = reportHoles.reduce((s,h)=>s+h.shots.length,0);
       const rPar = reportHoles.reduce((s,h)=>s+courseData[h.hole-1].par,0);
-      const html = buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData);
+      const displayName = course === "sandane" ? "Sandane Golfklubb" : "Sunnfjord Golfklubb";
+      const html = buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseData, displayName);
       const date = new Date().toISOString().slice(0,10);
       const time = new Date().toLocaleTimeString("nb-NO",{hour:"2-digit",minute:"2-digit"});
       const filename = `${courseName}_${date}_${loop}_${rScore}slag.html`;
@@ -1590,7 +1632,7 @@ function GolfShotTracker() {
         setSheetsStatus(result.ok ? "ok" : "error");
 
       setHoles([]); setCurrentHole(startHole); setCurrentShots([]); setSelectedClub(null); setCaddieIndex(null);
-      setStep("club"); setLastPos(teePositions[startHole - 1]); setInHole(false); setConfirmFinish(false); setConfirmStraff(false); setAimPoint(null); setAimMode(false);
+      setStep("club"); setLastPos(teePositions[startHole - 1]); setConfirmFinish(false); setConfirmStraff(false); setAimPoint(null); setAimMode(false);
       setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
     } finally {
       // Slipp vakta uansett — også viss noko kasta unntak undervegs.
@@ -1870,7 +1912,7 @@ function GolfShotTracker() {
                           setShowPuttPicker(false);
                           const nextHole = currentHole + 1;
                           setCurrentHole(nextHole);
-                          setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false);
+                          setStep("club"); setSelectedClub(null); setCaddieIndex(null);
                           setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
                           setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag (${n}-putt) — ${label}`);
                           window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1906,7 +1948,7 @@ function GolfShotTracker() {
                   setCurrentShots([]);
                   const nextHole = currentHole + 1;
                   setCurrentHole(nextHole);
-                  setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false);
+                  setStep("club"); setSelectedClub(null); setCaddieIndex(null);
                   setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
                   setMessage(`⛳ Hol ${currentHole} ferdig! ${score} slag — ${label}`);
                   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1987,7 +2029,7 @@ function GolfShotTracker() {
                             setCurrentShots([]);
                             const nextHole = currentHole + 1;
                             setCurrentHole(nextHole);
-                            setStep("club"); setSelectedClub(null); setCaddieIndex(null); setInHole(false); setShowPickup(false);
+                            setStep("club"); setSelectedClub(null); setCaddieIndex(null); setShowPickup(false);
                             setLastPos(nextHole <= endHole ? teePositions[nextHole-1] : null);
                             setMessage(`🏳️ Hol ${currentHole} pickup — ${opt.score} slag (${opt.label})`);
                             window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2061,7 +2103,7 @@ function GolfShotTracker() {
 
             {/* Map step — vel anna kølle */}
             {step === "map" && (
-              <button onClick={()=>{setStep("club");setSelectedClub(null);setInHole(false);}} style={{
+              <button onClick={()=>{setStep("club");setSelectedClub(null);}} style={{
                 width: "100%", marginTop: 6, padding: "12px", background: "#fff", border: "2px solid #ccc",
                 borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer",
               }}>← Vel anna kølle</button>
@@ -2105,7 +2147,7 @@ function GolfShotTracker() {
                     setHoles([]); setCurrentHole(startHole); setCurrentShots([]);
                     setSelectedClub(null); setCaddieIndex(null);
                     setStep("club"); setLastPos(teePositions[startHole-1]);
-                    setInHole(false); setConfirmFinish(false); setConfirmDiscard(false);
+                    setConfirmFinish(false); setConfirmDiscard(false);
                     setConfirmStraff(false); setAimPoint(null); setAimMode(false);
                     setShowPickup(false); setShowPuttPicker(false);
                     try { localStorage.removeItem(`golf-${course}-active-round`); } catch(e){}
@@ -2134,6 +2176,13 @@ function GolfShotTracker() {
                     const newStartHole = 1;
                     setCurrentHole(newStartHole);
                     setLoop("front");
+                    // Nullstill lastPos til hol 1-tee på det nye kurset.
+                    // course-effekten oppdaterer greens/rapportar automatisk,
+                    // men lastPos må setjast direkte fordi kurs-avhengige
+                    // tee-koordinatar ikkje er tilgjengelege via state enno.
+                    const newTee = id === "sandane" ? TEE_POSITIONS_YELLOW_SANDANE[0] : TEE_POSITIONS_YELLOW[0];
+                    setLastPos(newTee);
+                    setAimPoint(null); setAimMode(false);
                     try { localStorage.setItem("golf-course", id); } catch(e){}
                   }} style={{
                     flex:1, padding:"10px", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:700,

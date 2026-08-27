@@ -284,7 +284,7 @@ const OSM_HOLE_INTERMEDIATES = [
   [{ lat: 61.4833892, lon: 6.0825178 }],                                          // Hol 8
   [{ lat: 61.4858620, lon: 6.0823667 }],                                          // Hol 9
   [{ lat: 61.4862648, lon: 6.0773600 }],                                          // Hol 10 (= hol 1)
-  [{ lat: 61.4851632, lon: 6.0781625 }, { lat: 61.4843026, lon: 6.0782990 }],     // Hol 11
+  [{ lat: 61.4843026, lon: 6.0782990 }],                                          // Hol 11 — node1 fjerna 26.08.2026: låg 89m frå tee 11 (168m frå tee 2), arva frå hol 2
   [],                                                                              // Hol 12
   [{ lat: 61.4847895, lon: 6.0817276 }],                                          // Hol 13
   [{ lat: 61.4831006, lon: 6.0806725 }],                                          // Hol 14
@@ -295,65 +295,55 @@ const OSM_HOLE_INTERMEDIATES = [
 ];
 
 /**
- * Finn neste sikte-mål basert på OSM hole-line (dogleg-knekkpunkt) eller green.
+ * Finn siktepunkt ved å gå `carry` meter framover langs spelevegen.
  *
- * Sikteretning er viktig for dispersjonsellipsen: ho må peike der spelaren faktisk
- * skal sikte, ikkje rett mot green på dogleg-hol.
+ * Spelevegen er polylinja spelar → gjenverande dogleg-noder → green. I staden
+ * for å velje éin node som sikte-mål, returnerer vi punktet der kølla er venta
+ * å lande. Det gjer at ellipsen peikar rett både når doglegget ligg lenger ute
+ * enn carryen (siktar mot svingen) og når det ligg nærare (siktar forbi den).
  *
- * Algoritmen sjekkar tre krav per mellomnode:
- *   1. **Buffer**: spelaren må vere klart framom noden (>25m meir til green enn noden).
- *      Hindrar sikting mot noder ein nesten har passert.
- *   2. **Avstand**: spelaren må ikkje vere innan 10m av noden sjølv.
- *   3. **Vinkel**: retning mot node vs green må skilje seg med minst 10°.
- *      Hindrar sikting mot "strategiske noder" som ligg på rett linje (t.d. hol 5 Sandane).
+ * Erstattar findNextAimTarget (25m buffer + 10° vinkelterskel) 26.08.2026, som
+ * valde node uavhengig av kølle og difor sikta mot punkt 52–89m unna med Driver
+ * i handa (Sunnfjord hol 4 og 15 andreslag, hol 11 tee).
  *
- * Manuell aim-point (set via 🎯 Endre sikteretning-knappen) overstyrer denne logikken.
+ * Noder spelaren har passert blir filtrerte bort: noden må vere minst 15m
+ * nærare green enn spelaren. Same vern som løyste hol 6-buggen 11.05.2026.
+ *
+ * Manuell aim-point (set via 🎯 Endre sikteretning-knappen) overstyrer denne
+ * logikken i GolfMap.
  *
  * @param {{lat: number, lon: number}} fromPos - Spelaren sin posisjon (tee eller siste ball)
  * @param {Array<{lat: number, lon: number, elev?: number}>} intermediates - Mellomnoder for holet
  * @param {{lat: number, lon: number}} greenPos - Green-posisjon
- * @returns {{lat: number, lon: number}} Sikte-mål: enten ein node eller greenPos
+ * @param {number|null} carry - Forventa carry for vald kølle (m). Null = sikt green.
+ * @returns {{lat: number, lon: number}} Siktepunkt
  */
-function findNextAimTarget(fromPos, intermediates, greenPos) {
-  if (!intermediates || intermediates.length === 0) return greenPos;
-
-  // To krav må vere oppfylte for å sikta mot ein mellomnode:
-  //
-  // 1. BUFFER: spelaren må vere klart framom noden — minst 25m meir enn noden
-  //    er frå green. Dette hindrar at vi siktar mot noder vi er nesten forbi,
-  //    noko som gir feil retning (t.d. hol 6 frå fairway 164m → node 152m
-  //    frå green: 164 ≤ 152+25=177 → skip → sikt mot green ✓).
-  //
-  // 2. VINKEL: retninga mot noden vs retninga mot green må skilja seg med
-  //    minst 15°. Er det lite skilje, er det inga meining i å sikte mot noden
-  //    framfor green direkte (t.d. hol 1, 5, 8, 9 som er nesten rette linjer).
-  //
-  // Dersom begge krav er oppfylt, returnerast noden (siktar mot dogleg-kneepunkt).
-  // Elles: neste node i lista, eller til slutt: green.
-
+function findAimPointAlongPath(fromPos, intermediates, greenPos, carry) {
+  if (!fromPos || !greenPos) return greenPos;
   const distFromToGreen = haversineDistance(fromPos.lat, fromPos.lon, greenPos.lat, greenPos.lon);
+  // Ingen kølle vald, eller kølla når heilt fram: sikt rett på green.
+  if (!carry || carry >= distFromToGreen) return greenPos;
 
-  for (const node of intermediates) {
-    const distNodeToGreen = haversineDistance(node.lat, node.lon, greenPos.lat, greenPos.lon);
-    const distFromToNode  = haversineDistance(fromPos.lat, fromPos.lon, node.lat, node.lon);
+  // Bygg spelevegen framover. Noder som ligg bak (eller nesten på linje med)
+  // spelaren blir filtrerte bort — elles ville sikteretninga peike bakover.
+  const path = [fromPos];
+  if (intermediates) {
+    for (const node of intermediates) {
+      const distNodeToGreen = haversineDistance(node.lat, node.lon, greenPos.lat, greenPos.lon);
+      if (distFromToGreen > distNodeToGreen + 15) path.push(node);
+    }
+  }
+  path.push(greenPos);
 
-    // Krav 1: buffer — spelaren er klart framom noden
-    if (distFromToGreen <= distNodeToGreen + 25) continue;
-
-    // Ikkje sikt mot ein node vi er < 10m frå
-    if (distFromToNode < 10) continue;
-
-    // Krav 2: vinkel — retninga mot node vs green må skilje minst 10°
-    //   15° fanga ikkje opp mjuke dogleg som Sandane hol 1 node 2 (14°) og
-    //   hol 6 (14°). 10° er fleksibelt nok for desse, men strengt nok til at
-    //   strategiske noder med 2° (hol 5) ikkje feilaktig styrer sikteretninga.
-    const bNode  = calcBearing(fromPos.lat, fromPos.lon, node.lat, node.lon);
-    const bGreen = calcBearing(fromPos.lat, fromPos.lon, greenPos.lat, greenPos.lon);
-    let angleDiff = Math.abs(bNode - bGreen);
-    if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
-    if (angleDiff * 180 / Math.PI < 10) continue;
-
-    return node;
+  // Gå carry meter langs polylinja og returner punktet vi hamnar på.
+  let rest = carry;
+  for (let i = 0; i < path.length - 1; i++) {
+    const seg = haversineDistance(path[i].lat, path[i].lon, path[i + 1].lat, path[i + 1].lon);
+    if (rest <= seg) {
+      const b = calcBearing(path[i].lat, path[i].lon, path[i + 1].lat, path[i + 1].lon);
+      return pointAtDistanceAndBearing(path[i].lat, path[i].lon, rest, b);
+    }
+    rest -= seg;
   }
   return greenPos;
 }
@@ -624,14 +614,13 @@ function GolfMap({ currentHole, lastPos, onPlaceBall, currentShots, holes, teePo
   const teePos = teePositions[currentHole - 1];
   // Sikte-mål-logikk:
   //   1. Manuell aim-point (🎯-knappen) overstyrer alt.
-  //   2. Elles: dynamisk OSM hole-line via findNextAimTarget — siktar mot
-  //      neste relevante mellomnoden (kneepunkt på dogleg) dersom spelaren er
-  //      klart framom noden OG vinkelen er signifikant (≥10°). Elles green.
-  //   3. Fallback: greenPos.
-  // Algoritmen (buffer + vinkelsjekk) løyser hol 6-bugen frå 11.05.2026:
-  // frå fairway 164m → node 152m frå green: 164 ≤ 177 (buffer) → sikt green ✓.
+  //   2. Elles: sti-basert sikte via findAimPointAlongPath — punktet som ligg
+  //      ein carry framme langs spelevegen (spelar → dogleg-noder → green).
+  //   3. Fallback: greenPos (òg når ingen kølle er vald).
+  const aimCarry = selectedClub && CLUB_DISPERSION[selectedClub]
+    ? CLUB_DISPERSION[selectedClub].carry : null;
   const aimTarget = aimPoint
-    || (greenPos ? findNextAimTarget(lastPos || teePos, holeIntermediates[currentHole - 1] || [], greenPos) : null);
+    || (greenPos ? findAimPointAlongPath(lastPos || teePos, holeIntermediates[currentHole - 1] || [], greenPos, aimCarry) : null);
 
   clickHandlerRef.current = calibrateMode ? onCalibrateTap : onPlaceBall;
 

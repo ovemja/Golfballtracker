@@ -96,6 +96,19 @@ const CADDIE_CLUBS = ["Driver", "5-Wood", "6i", "7i", "8i", "9i", "PW", "GW", "S
 // sterkt sollys enn Georgia. Brukar systemfont for å unngå ekstra fontlasting.
 const NUM_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
+// Straffårsaker (lagt til 28.08.2026). Blir lagra som `penaltyReason` på straffeslaget
+// og sendt til Sheets, slik at ein etterpå kan svare på KVA slags feil som kostar slag —
+// ikkje berre kor mange straffeslag ein fekk.
+// `key` er verdien som blir lagra; `label` er knappeteksten. Hald dei like, elles blir
+// analysen i Sheets vanskeleg å lese. "Straffområde" dekkjer både vatn og raude/gule merke.
+const PENALTY_REASONS = [
+  { key: "OB",           label: "OB" },
+  { key: "Straffområde", label: "Straffområde" },
+  { key: "Tapt ball",    label: "Tapt ball" },
+  { key: "Unplayable",   label: "Unplayable" },
+  { key: "Anna",         label: "Anna" },
+];
+
 /**
  * Finn kølla med totalavstand nærast mål-avstanden.
  * Klampar: viss målet er > Driver, returner Driver. Viss < SW, returner SW.
@@ -924,7 +937,9 @@ function buildReportHTML(reportHoles, tee, teePositions, greenPositions, courseD
     const rows = h.shots.map(s => {
       const dist = s.distance ? `${s.distance}m` : "–";
       const toHole = s.toHole ? `${s.toHole}m` : "–";
-      return `<tr><td style="text-align:center">${s.shotNumber}</td><td>${s.club}</td><td style="text-align:center">${dist}</td><td style="text-align:center">${toHole}</td></tr>`;
+      // Straffeslag registrerte etter 28.08.2026 har årsak. Eldre har det ikkje.
+      const clubTxt = s.penalty && s.penaltyReason ? `${s.club} (${s.penaltyReason})` : s.club;
+      return `<tr><td style="text-align:center">${s.shotNumber}</td><td>${clubTxt}</td><td style="text-align:center">${dist}</td><td style="text-align:center">${toHole}</td></tr>`;
     }).join("");
     return `<h3 style="margin:18px 0 6px;color:#2d5a3d">Hol ${h.hole} — Par ${hi.par} — ${h.shots.length} slag (${scoreLabel(h.shots.length, hi.par)})</h3>
       <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">
@@ -1075,6 +1090,9 @@ function ReportItem({ report: r, index: i, savedReports, setSavedReports, course
         toHole: null,
         shotNumber: h.shots.length + 1,
         penalty: true,
+        // Etterregistrerte straffeslag har ingen årsak — brukaren hugsar ikkje
+        // nødvendigvis kva som skjedde. Feltet er med for eit einsarta skjema.
+        penaltyReason: null,
       };
       return { ...h, shots: [...h.shots, penaltyShot] };
     });
@@ -1375,24 +1393,12 @@ function GolfShotTracker() {
     setAimMode(false);
   }, [currentHole]);
 
-  // Lagre aktiv runde.
-  //
-  // Merk: her finst ingen else-grein som slettar nøkkelen når runden er tom.
-  // Den vart fjerna 28.08.2026. Grunn: kursbyte-handteraren kallar setCourse(id)
-  // og setHoles([]) i same batch, så effekten køyrde éin gong med NY course og
-  // tom holes — og sletta då `golf-{nykurs}-active-round`. Ein lagra runde på
-  // kurset du bytta TIL forsvann. Sidan setHoles([]) gir ny array-referanse
-  // kvar gong, skjedde det same ved byte tilbake, så runden på det opphavlege
-  // kurset ryk òg.
-  //
-  // Sletting skjer i staden der runden faktisk tek slutt: finishRound og
-  // forkast-knappen gjer begge removeItem sjølve. Ei tom `holes` er ikkje i
-  // seg sjølv eit signal om at runden er avslutta.
+  // Lagre aktiv runde
   useEffect(() => {
     try {
       if (holes.length > 0 || currentShots.length > 0) {
         localStorage.setItem(`golf-${course}-active-round`, JSON.stringify({ holes, currentHole, currentShots, tee, loop, course }));
-      }
+      } else { localStorage.removeItem(`golf-${course}-active-round`); }
     } catch(e){}
   }, [holes, currentHole, currentShots, tee]);
 
@@ -1611,6 +1617,7 @@ function GolfShotTracker() {
               lat: s.pos ? s.pos.lat : null,
               lon: s.pos ? s.pos.lon : null,
               penalty: s.penalty || false,
+              penaltyReason: s.penaltyReason || null,
               pickup: s.pickup || false,
             })),
           })),
@@ -1985,22 +1992,33 @@ function GolfShotTracker() {
                 )}
 
                 {/* Straffeslag-bekrefting. Lagt til 02.05.2026 etter at brukar
-                    rapporterte at straffeslag burde krevje bekrefting. */}
+                    rapporterte at straffeslag burde krevje bekrefting.
+                    Omskrive 28.08.2026: bekreftinga er no eit årsaksval. Å velje ein
+                    årsaksknapp ER bekreftinga, så flyten er framleis to trykk
+                    (Straff +1 → årsak) og gir same vern mot feiltrykk som før. */}
                 {confirmStraff && (
-                  <div style={{ background: "#fff", border: "2px solid #cc6600", borderRadius: 12, padding: "16px", marginBottom: 8, textAlign: "center" }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>Legge til straffeslag?</div>
-                    <div style={{ fontSize: 13, color: "#666", marginBottom: 14 }}>Score blir auka med 1</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={()=>setConfirmStraff(false)} style={{ flex: 1, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
-                      <button onClick={()=>{
-                        const lastShot = currentShots[currentShots.length - 1];
-                        const pos = lastShot?.pos || lastPos;
-                        const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true };
-                        setCurrentShots(prev => [...prev, shot]);
-                        setMessage(`⚠️ Straffeslag lagt til — no ${currentShots.length + 1} slag`);
-                        setConfirmStraff(false);
-                      }} style={{ flex: 2, padding: "12px", background: "#cc6600", border: "2px solid #cc6600", borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚠️ Bekreft straff +1</button>
+                  <div style={{ background: "#fff", border: "2px solid #cc6600", borderRadius: 12, padding: "16px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 4, textAlign: "center" }}>Kva slags straff?</div>
+                    <div style={{ fontSize: 13, color: "#666", marginBottom: 14, textAlign: "center" }}>Score blir auka med 1</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      {PENALTY_REASONS.map((reason, ri) => (
+                        <button key={reason.key} onClick={()=>{
+                          const lastShot = currentShots[currentShots.length - 1];
+                          const pos = lastShot?.pos || lastPos;
+                          const shot = { club: "Straff", pos, distance: null, toHole: lastShot?.toHole || null, shotNumber: currentShots.length + 1, penalty: true, penaltyReason: reason.key };
+                          setCurrentShots(prev => [...prev, shot]);
+                          setMessage(`⚠️ Straffeslag (${reason.label}) lagt til — no ${currentShots.length + 1} slag`);
+                          setConfirmStraff(false);
+                        }} style={{
+                          gridColumn: ri === PENALTY_REASONS.length - 1 ? "1 / -1" : "auto",
+                          minHeight: 52, padding: "14px 8px",
+                          background: "#cc6600", border: "2px solid #cc6600", borderRadius: 8,
+                          color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer",
+                          fontFamily: NUM_FONT,
+                        }}>{reason.label}</button>
+                      ))}
                     </div>
+                    <button onClick={()=>setConfirmStraff(false)} style={{ width: "100%", marginTop: 8, padding: "12px", background: "#fff", border: "2px solid #ccc", borderRadius: 8, color: "#666", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Avbryt</button>
                   </div>
                 )}
 

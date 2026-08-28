@@ -1375,12 +1375,24 @@ function GolfShotTracker() {
     setAimMode(false);
   }, [currentHole]);
 
-  // Lagre aktiv runde
+  // Lagre aktiv runde.
+  //
+  // Merk: her finst ingen else-grein som slettar nøkkelen når runden er tom.
+  // Den vart fjerna 28.08.2026. Grunn: kursbyte-handteraren kallar setCourse(id)
+  // og setHoles([]) i same batch, så effekten køyrde éin gong med NY course og
+  // tom holes — og sletta då `golf-{nykurs}-active-round`. Ein lagra runde på
+  // kurset du bytta TIL forsvann. Sidan setHoles([]) gir ny array-referanse
+  // kvar gong, skjedde det same ved byte tilbake, så runden på det opphavlege
+  // kurset ryk òg.
+  //
+  // Sletting skjer i staden der runden faktisk tek slutt: finishRound og
+  // forkast-knappen gjer begge removeItem sjølve. Ei tom `holes` er ikkje i
+  // seg sjølv eit signal om at runden er avslutta.
   useEffect(() => {
     try {
       if (holes.length > 0 || currentShots.length > 0) {
         localStorage.setItem(`golf-${course}-active-round`, JSON.stringify({ holes, currentHole, currentShots, tee, loop, course }));
-      } else { localStorage.removeItem(`golf-${course}-active-round`); }
+      }
     } catch(e){}
   }, [holes, currentHole, currentShots, tee]);
 

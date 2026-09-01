@@ -593,6 +593,63 @@ async function sendToSheets(roundData) {
   }
 }
 
+/**
+ * Byggjer payloaden som blir sendt til Google Sheets.
+ *
+ * Trekt ut av `finishRound` 01.09.2026 slik at same objekt kan byggjast både
+ * ved rundeslutt og seinare frå ein lagra, men usendt rapport i historikk-fana.
+ * Metadata må komme frå rapporten (rundetidspunktet), ikkje frå sendetidspunktet.
+ *
+ * @param {Object} meta - {date, time, tee, loop, course} frå runda/rapporten
+ * @param {Array} reportHoles - Hol-array med shots, slik det ligg i rapporten
+ * @param {Array} courseData - Banedata for gjeldande bane
+ * @returns {Object} roundData klar for sendToSheets
+ */
+function buildRoundData(meta, reportHoles, courseData) {
+  const { date, time, tee, loop, course } = meta;
+  const rScore = reportHoles.reduce((s,h) => s + h.shots.length, 0);
+  const rPar = reportHoles.reduce((s,h) => s + courseData[h.hole-1].par, 0);
+  return {
+    date, time, tee, loop, course,
+    holesPlayed: reportHoles.length,
+    score: rScore, par: rPar, diff: rScore - rPar,
+    holes: reportHoles.map(h => ({
+      hole: h.hole,
+      par: courseData[h.hole-1].par,
+      index: courseData[h.hole-1].index,
+      holeLength: courseData[h.hole-1].yellowM,
+      shots: h.shots.length,
+      diff: h.shots.length - courseData[h.hole-1].par,
+      unfinished: h.unfinished || false,
+      pickup: h.pickup || false,
+      details: h.shots.map(s => ({
+        num: s.shotNumber, club: s.club,
+        distance: s.distance || null,
+        toHole: s.toHole || null,
+        lat: s.pos ? s.pos.lat : null,
+        lon: s.pos ? s.pos.lon : null,
+        penalty: s.penalty || false,
+        penaltyReason: s.penaltyReason || null,
+        pickup: s.pickup || false,
+      })),
+    })),
+    clubStats: (() => {
+      const cs = {};
+      reportHoles.flatMap(h => h.shots).forEach(s => {
+        if (s.penalty || s.pickup) return;
+        if (!cs[s.club]) cs[s.club] = { count: 0, dists: [] };
+        cs[s.club].count++;
+        if (s.distance) cs[s.club].dists.push(s.distance);
+      });
+      return Object.entries(cs).map(([club, st]) => ({
+        club, count: st.count,
+        avg: st.dists.length ? Math.round(st.dists.reduce((a,b)=>a+b,0)/st.dists.length) : null,
+        max: st.dists.length ? Math.max(...st.dists) : null,
+      }));
+    })(),
+  };
+}
+
 // ─── Leaflet Map Component ───
 /**
  * Hovudkartet — viser holet med tee, green, slag, dispersjonsellipse og brukar-GPS.
@@ -1047,22 +1104,32 @@ function Scorecard({ holes, currentHole, currentShots, tee, courseData }) {
 // ─── ReportItem ───
 /**
  * Komponent som viser éin lagra rapport i historikk-fanen.
- * Støttar deling (via Web Share API) og sletting av rapporten.
+ * Støttar deling, sletting, straffe-redigering (før sending) og
+ * utsett sending til Google Sheets.
  *
  * @param {Object} props
  * @param {Object} props.report - Rapport-objekt med dato, score, html, etc.
  * @param {number} props.index - Indeks i savedReports-arrayet
  * @param {Array} props.savedReports - Heile rapport-lista
  * @param {Function} props.setSavedReports - Setter for å oppdatere lista
+ * @param {Function} props.setSheetsStatus - Setter for statusbanneret i historikk-fana
  */
-function ReportItem({ report: r, index: i, savedReports, setSavedReports, course, tee, teePositions, greenPositions, courseData }) {
+function ReportItem({ report: r, index: i, savedReports, setSavedReports, setSheetsStatus, course, tee, teePositions, greenPositions, courseData }) {
   const [showShareText, setShowShareText] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [sending, setSending] = useState(false);
   // Rapportar lagra før straff-redigering vart lagt til manglar `holes`-strukturen
   // og kan difor ikkje redigerast. Bruk deira eigen lagra `course` viss den finst,
   // elles fall tilbake på gjeldande `course` frå appen.
-  const canEdit = Array.isArray(r.holes) && r.holes.length > 0;
   const reportCourse = r.course || course;
+  // Rapportar lagra før utsett sending (01.09.2026) manglar `sent`-feltet. Dei
+  // vart alltid sende automatisk, så `undefined` MÅ tolkast som sendt — elles
+  // kan dei sendast ein gong til og gi duplikate rader i Sheets.
+  const isSent = r.sent !== false;
+  // Straffe-redigering er berre lov før sendinga. Apps Script appendar utan
+  // nøkkel, så ei sendt runde kan ikkje oppdaterast frå appen — då må retting
+  // gjerast direkte i Google Sheets.
+  const canEdit = Array.isArray(r.holes) && r.holes.length > 0 && !isSent;
   const handleDelete = async () => {
     const updated = savedReports.filter((_,idx) => idx !== i);
     setSavedReports(updated);
@@ -1073,10 +1140,42 @@ function ReportItem({ report: r, index: i, savedReports, setSavedReports, course
   };
 
   /**
+   * Sender ein lagra, men usendt rapport til Google Sheets.
+   *
+   * Metadata blir henta frå rapporten, ikkje frå sendetidspunktet, slik at rada
+   * i Sheets får rundetida. Sidan `no-cors` hindrar oss i å lese responsen, blir
+   * `sent: true` sett så lenge fetch ikkje kasta — det er eit *antatt* sendt.
+   */
+  const handleSend = async () => {
+    if (sending || isSent || !Array.isArray(r.holes) || r.holes.length === 0) return;
+    setSending(true);
+    if (setSheetsStatus) setSheetsStatus("sending");
+    try {
+      const meta = {
+        date: r.date, time: r.time,
+        tee: r.tee || tee,
+        loop: r.loop || null,
+        course: reportCourse,
+      };
+      const result = await sendToSheets(buildRoundData(meta, r.holes, courseData));
+      if (setSheetsStatus) setSheetsStatus(result.ok ? "ok" : "error");
+      if (result.ok) {
+        const updated = savedReports.map((rep,idx) => idx===i ? { ...rep, sent: true } : rep);
+        setSavedReports(updated);
+        try { localStorage.setItem(`golf-${reportCourse}-reports`, JSON.stringify(updated)); } catch(e){}
+        setEditMode(false);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /**
    * Legg til eitt straffeslag bakerst på eit hol i ein ferdig runde.
    * Oppdaterer holes-strukturen, reknar score/diff på nytt, regenererer
    * rapport-HTML-en og persisterer heile lista til localStorage.
-   * Berre lokal oppdatering — ingen ny sending til Google Sheets.
+   * Berre tilgjengeleg før runda er sendt til Sheets — den oppdaterte scoren
+   * blir med når du seinare trykkjer "Send til Google Sheets".
    *
    * @param {number} holeArrayIdx - Indeks i r.holes-arrayet (ikkje hol-nummer)
    */
@@ -1107,12 +1206,15 @@ function ReportItem({ report: r, index: i, savedReports, setSavedReports, course
   };
   const diffStr = r.diff>0?`+${r.diff}`:r.diff===0?"E":`${r.diff}`;
   return (
-    <div style={{ padding: "14px 16px", marginBottom: 8, background: "#fff", border: "1px solid #ccc", borderRadius: 10 }}>
+    <div style={{ padding: "14px 16px", marginBottom: 8, background: "#fff", border: isSent ? "1px solid #ccc" : "2px solid #cc6600", borderRadius: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 15, color: "#1a3a25", fontWeight: 700, marginBottom: 2 }}>{r.date} kl. {r.time}</div>
           <div style={{ fontSize: 13, color: "#666" }}>{r.holesPlayed} hol · {r.score} slag · <span style={{ color: r.diff>0?"#cc0000":r.diff<0?"#1a7a1a":"#0066cc", fontWeight: 700 }}>{diffStr}</span></div>
         </div>
+        {!isSent && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#cc6600", background: "#fff3cd", border: "1px solid #cc6600", borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>Ikkje sendt</span>
+        )}
       </div>
       <div style={{ display: "flex", gap: 6 }}>
         <button onClick={handleToggleShow} style={{ flex: 2, padding: "12px", background: r._show?"#e8f5e9":"#fff", border: "2px solid #1a3a25", borderRadius: 8, color: "#1a3a25", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>{r._show?"Skjul":"👁️ Vis"}</button>
@@ -1122,10 +1224,13 @@ function ReportItem({ report: r, index: i, savedReports, setSavedReports, course
       {canEdit && (
         <button onClick={()=>setEditMode(v=>!v)} style={{ width: "100%", marginTop: 6, padding: "10px", background: editMode?"#fff3cd":"#fff", border: "2px solid #cc6600", borderRadius: 8, color: "#cc6600", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{editMode?"Ferdig":"✏️ Legg til straffeslag"}</button>
       )}
+      {!isSent && (
+        <button onClick={handleSend} disabled={sending} style={{ width: "100%", marginTop: 6, padding: "12px", background: sending?"#999":"#1a3a25", border: "2px solid #1a3a25", borderRadius: 8, color: "#fff", fontSize: 15, fontWeight: 700, cursor: sending?"not-allowed":"pointer", opacity: sending?0.7:1 }}>{sending?"📤 Sender...":"📤 Send til Google Sheets"}</button>
+      )}
       {editMode && canEdit && (
         <div style={{ marginTop: 8, background: "#fffaf0", border: "2px solid #cc6600", borderRadius: 8, padding: "10px 12px" }}>
           <div style={{ fontSize: 12, color: "#8a5000", marginBottom: 8, lineHeight: 1.5 }}>
-            Trykk +1 for å legge eit straffeslag bakerst på holet. Endringa gjeld berre den lagra rapporten.
+            Trykk +1 for å legge eit straffeslag bakerst på holet. Rett opp alt før du sender — etter sending kan runda berre rettast direkte i Google Sheets.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {r.holes.map((h, hIdx) => {
@@ -1530,7 +1635,7 @@ function GolfShotTracker() {
     setMessage(`↩ Fjerna slag ${removed.shotNumber} (${removed.club})`);
   };
 
-  const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error"
+  const [sheetsStatus, setSheetsStatus] = useState(null); // null | "sending" | "ok" | "error" | "pending" (lagra, ikkje sendt)
   const [showPickup, setShowPickup] = useState(false);
   const [showPuttPicker, setShowPuttPicker] = useState(false);
   // Caddie-modus: appen foreslår kølle basert på avstand. Brukar kan bla
@@ -1568,7 +1673,18 @@ function GolfShotTracker() {
     if (autoClub !== selectedClub) setSelectedClub(autoClub);
   }, [caddieMode, showAllClubs, step, caddieIndex, distToHole, playsLike, currentHole, currentShots.length]);
 
-  const finishRound = async () => {
+  /**
+   * Avsluttar runda: byggjer rapport, lagrar lokalt, og sender til Sheets
+   * viss `sendNow` er sann.
+   *
+   * `sendNow: false` (lagt til 01.09.2026) lagrar rapporten med `sent: false`
+   * slik at straffeslag kan etterregistrerast før sendinga. Sendinga skjer då
+   * frå historikk-fana. Sidan Apps Script berre appendar, må kvar runde sendast
+   * nøyaktig éin gong — difor blir straffe-redigering låst så snart `sent` er sann.
+   *
+   * @param {boolean} sendNow - Send til Sheets med ein gong (standard)
+   */
+  const finishRound = async (sendNow = true) => {
     // Synkron sjekk via ref — ikkje state. Forhindrar at to klikk i rask
     // rekkefølge begge kjem forbi vakta før React har re-rendra.
     if (isSendingRef.current) return;
@@ -1590,58 +1706,24 @@ function GolfShotTracker() {
       const date = new Date().toISOString().slice(0,10);
       const time = new Date().toLocaleTimeString("nb-NO",{hour:"2-digit",minute:"2-digit"});
       const filename = `${courseName}_${date}_${loop}_${rScore}slag.html`;
-      const newReport = { filename, date, time, holesPlayed: reportHoles.length, score: rScore, par: rPar, diff: rScore-rPar, html, holes: reportHoles, course };
+      const newReport = { filename, date, time, holesPlayed: reportHoles.length, score: rScore, par: rPar, diff: rScore-rPar, html, holes: reportHoles, course, loop, tee, sent: sendNow };
       const updated = [newReport, ...savedReports];
       setSavedReports(updated);
       try { localStorage.setItem(`golf-${course}-reports`, JSON.stringify(updated)); localStorage.removeItem(`golf-${course}-active-round`); } catch(e){}
 
-      // Send til Google Sheets
-      setSheetsStatus("sending");
-      const roundData = {
-          date, time, tee, loop, course,
-          holesPlayed: reportHoles.length,
-          score: rScore, par: rPar, diff: rScore - rPar,
-          holes: reportHoles.map(h => ({
-            hole: h.hole,
-            par: courseData[h.hole-1].par,
-            index: courseData[h.hole-1].index,
-            holeLength: courseData[h.hole-1].yellowM,
-            shots: h.shots.length,
-            diff: h.shots.length - courseData[h.hole-1].par,
-            unfinished: h.unfinished || false,
-            pickup: h.pickup || false,
-            details: h.shots.map(s => ({
-              num: s.shotNumber, club: s.club,
-              distance: s.distance || null,
-              toHole: s.toHole || null,
-              lat: s.pos ? s.pos.lat : null,
-              lon: s.pos ? s.pos.lon : null,
-              penalty: s.penalty || false,
-              penaltyReason: s.penaltyReason || null,
-              pickup: s.pickup || false,
-            })),
-          })),
-          clubStats: (() => {
-            const cs = {};
-            reportHoles.flatMap(h=>h.shots).forEach(s => {
-              if (s.penalty || s.pickup) return;
-              if (!cs[s.club]) cs[s.club] = { count: 0, dists: [] };
-              cs[s.club].count++;
-              if (s.distance) cs[s.club].dists.push(s.distance);
-            });
-            return Object.entries(cs).map(([club, st]) => ({
-              club, count: st.count,
-              avg: st.dists.length ? Math.round(st.dists.reduce((a,b)=>a+b,0)/st.dists.length) : null,
-              max: st.dists.length ? Math.max(...st.dists) : null,
-            }));
-          })(),
-        };
+      // Send til Google Sheets — berre viss brukaren valde "send no".
+      if (sendNow) {
+        setSheetsStatus("sending");
+        const roundData = buildRoundData({ date, time, tee, loop, course }, reportHoles, courseData);
         const result = await sendToSheets(roundData);
         setSheetsStatus(result.ok ? "ok" : "error");
+      } else {
+        setSheetsStatus("pending");
+      }
 
       setHoles([]); setCurrentHole(startHole); setCurrentShots([]); setSelectedClub(null); setCaddieIndex(null);
       setStep("club"); setLastPos(teePositions[startHole - 1]); setConfirmFinish(false); setConfirmStraff(false); setAimPoint(null); setAimMode(false);
-      setMessage(`📄 Rapport lagra og sendt til Google Sheets`); setView("reports");
+      setMessage(sendNow ? `📄 Rapport lagra og sendt til Google Sheets` : `📄 Rapport lagra — ikkje sendt til Sheets enno`); setView("reports");
     } finally {
       // Slipp vakta uansett — også viss noko kasta unntak undervegs.
       // Då kan brukaren prøve igjen utan å reloade appen.
@@ -2148,9 +2230,14 @@ function GolfShotTracker() {
               <div style={{background:"#fff",border:"2px solid #cc4444",borderRadius:12,padding:"20px",textAlign:"center"}}>
                 <div style={{fontSize:18,fontWeight:700,color:"#1a1a1a",marginBottom:4}}>Avslutte runden?</div>
                 <div style={{fontSize:14,color:"#666",marginBottom:16}}>{holes.length} hol · {totalScore} slag</div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>setConfirmFinish(false)} style={{flex:1,padding:"14px",background:"#fff",border:"2px solid #ccc",borderRadius:8,color:"#666",fontSize:15,fontWeight:600,cursor:"pointer"}}>Avbryt</button>
-                  <button onClick={finishRound} disabled={isSending} style={{flex:2,padding:"14px",background:isSending?"#999":"#cc4444",border:isSending?"2px solid #999":"2px solid #cc4444",borderRadius:8,color:"#fff",fontSize:16,fontWeight:700,cursor:isSending?"not-allowed":"pointer",opacity:isSending?0.7:1}}>{isSending?"📤 Sender...":"📄 Avslutt og lagre"}</button>
+                {/* Tre stabla knappar (01.09.2026). Tre knappar på rad blir for
+                    smale på iPhone 13. "Juster fyrst" lagrar utan å sende, slik
+                    at straffeslag kan etterregistrerast i historikk-fana før
+                    runda blir sendt til Sheets. */}
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <button onClick={()=>finishRound(true)} disabled={isSending} style={{width:"100%",padding:"14px",background:isSending?"#999":"#cc4444",border:isSending?"2px solid #999":"2px solid #cc4444",borderRadius:8,color:"#fff",fontSize:16,fontWeight:700,cursor:isSending?"not-allowed":"pointer",opacity:isSending?0.7:1}}>{isSending?"📤 Sender...":"📄 Avslutt og send til Sheets"}</button>
+                  <button onClick={()=>finishRound(false)} disabled={isSending} style={{width:"100%",padding:"14px",background:"#fff",border:"2px solid #cc6600",borderRadius:8,color:"#cc6600",fontSize:15,fontWeight:700,cursor:isSending?"not-allowed":"pointer",opacity:isSending?0.5:1}}>✏️ Avslutt — juster fyrst</button>
+                  <button onClick={()=>setConfirmFinish(false)} disabled={isSending} style={{width:"100%",padding:"12px",background:"#fff",border:"2px solid #ccc",borderRadius:8,color:"#666",fontSize:15,fontWeight:600,cursor:isSending?"not-allowed":"pointer"}}>Avbryt</button>
                 </div>
               </div>
             )}
@@ -2298,7 +2385,7 @@ function GolfShotTracker() {
             {/* Google Sheets oppsett */}
             <div style={{fontSize:13,color:"#666",fontWeight:700,marginBottom:10,marginTop:10,textTransform:"uppercase",letterSpacing:"0.08em"}}>Google Sheets</div>
             <div style={{fontSize:11,color:"#2d8a4e",marginBottom:10,fontWeight:600}}>
-              ✅ Google Sheets aktiv — rundedata vert sendt automatisk
+              ✅ Google Sheets aktiv — du vel «send no» eller «juster fyrst» når runda blir avslutta
             </div>
           </div>
         )}
@@ -2309,17 +2396,18 @@ function GolfShotTracker() {
             {sheetsStatus && (
               <div style={{
                 padding:"10px 14px",marginBottom:10,borderRadius:8,fontSize:13,fontWeight:600,
-                background: sheetsStatus==="ok"?"#e8f5e9":sheetsStatus==="sending"?"#fff8e1":"#ffebee",
-                border: `2px solid ${sheetsStatus==="ok"?"#4a8c5c":sheetsStatus==="sending"?"#e6a800":"#cc4444"}`,
+                background: sheetsStatus==="ok"?"#e8f5e9":(sheetsStatus==="sending"||sheetsStatus==="pending")?"#fff8e1":"#ffebee",
+                border: `2px solid ${sheetsStatus==="ok"?"#4a8c5c":(sheetsStatus==="sending"||sheetsStatus==="pending")?"#e6a800":"#cc4444"}`,
                 color: sheetsStatus==="ok"?"#1a3a25":sheetsStatus==="error"?"#cc4444":"#8a6500",
               }}>
                 {sheetsStatus==="sending"&&"📤 Sender til Google Sheets..."}
                 {sheetsStatus==="ok"&&"✅ Rundedata sendt til Google Sheets"}
                 {sheetsStatus==="error"&&"❌ Klarte ikkje sende til Google Sheets"}
+                {sheetsStatus==="pending"&&"✏️ Runda er lagra lokalt. Legg til eventuelle straffeslag, og trykk «Send til Google Sheets»."}
               </div>
             )}
             {savedReports.length===0?<div style={{textAlign:"center",color:"#999",padding:30,fontSize:14}}>Ingen rapportar enno</div>
-            :savedReports.map((r,i)=><ReportItem key={`${r.date}-${r.time}-${i}`} report={r} index={i} savedReports={savedReports} setSavedReports={setSavedReports} course={course} tee={tee} teePositions={teePositions} greenPositions={greenPositions} courseData={courseData}/>)}
+            :savedReports.map((r,i)=><ReportItem key={`${r.date}-${r.time}-${i}`} report={r} index={i} savedReports={savedReports} setSavedReports={setSavedReports} setSheetsStatus={setSheetsStatus} course={course} tee={tee} teePositions={teePositions} greenPositions={greenPositions} courseData={courseData}/>)}
           </div>
         )}
       </div>
